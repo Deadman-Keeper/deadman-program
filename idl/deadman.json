@@ -1,0 +1,3377 @@
+{
+  "address": "ACHVLMoLDM3YPpGbNST4cZW4Tf2jx6nzJGuusyLJHofL",
+  "metadata": {
+    "name": "deadman",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Deadman: self-custody safety net vault"
+  },
+  "instructions": [
+    {
+      "name": "accept_admin",
+      "discriminator": [
+        112,
+        42,
+        45,
+        90,
+        116,
+        181,
+        13,
+        170
+      ],
+      "accounts": [
+        {
+          "name": "new_admin",
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "close_vault",
+      "discriminator": [
+        141,
+        103,
+        17,
+        126,
+        72,
+        75,
+        29,
+        29
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "vault.plan_id",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "rent_payer",
+          "writable": true,
+          "relations": [
+            "vault"
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_plan",
+      "discriminator": [
+        77,
+        43,
+        141,
+        254,
+        212,
+        118,
+        41,
+        186
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Funds the vault's rent: the owner, or a fee sponsor such as Kora",
+            "that charges the owner in USDC instead."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "arg",
+                "path": "plan_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "plan_id",
+          "type": "u16"
+        },
+        {
+          "name": "label",
+          "type": "string"
+        },
+        {
+          "name": "guard",
+          "type": "pubkey"
+        },
+        {
+          "name": "lock_secs",
+          "type": "i64"
+        },
+        {
+          "name": "skip_grace_secs",
+          "type": "i64"
+        },
+        {
+          "name": "rules",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "RuleInput"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "create_vesting",
+      "discriminator": [
+        135,
+        184,
+        171,
+        156,
+        197,
+        162,
+        246,
+        44
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Funds the vault's rent: the owner, or a fee sponsor such as Kora",
+            "that charges the owner in USDC instead."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "arg",
+                "path": "plan_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "plan_id",
+          "type": "u16"
+        },
+        {
+          "name": "label",
+          "type": "string"
+        },
+        {
+          "name": "guard",
+          "type": "pubkey"
+        },
+        {
+          "name": "lock_secs",
+          "type": "i64"
+        },
+        {
+          "name": "start_at",
+          "type": "i64"
+        },
+        {
+          "name": "revocable",
+          "type": "bool"
+        },
+        {
+          "name": "schedules",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "VestingInput"
+              }
+            }
+          }
+        },
+        {
+          "name": "period_secs",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "execute_sol_rule",
+      "discriminator": [
+        27,
+        74,
+        220,
+        147,
+        58,
+        73,
+        241,
+        103
+      ],
+      "accounts": [
+        {
+          "name": "executor",
+          "docs": [
+            "Anyone: the beneficiary, a keeper, or the protocol's own bot."
+          ],
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.owner",
+                "account": "Vault"
+              },
+              {
+                "kind": "account",
+                "path": "vault.plan_id",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "beneficiary",
+          "writable": true
+        },
+        {
+          "name": "treasury",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "index",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "execute_token_rule",
+      "discriminator": [
+        172,
+        93,
+        237,
+        201,
+        225,
+        26,
+        97,
+        140
+      ],
+      "accounts": [
+        {
+          "name": "executor",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.owner",
+                "account": "Vault"
+              },
+              {
+                "kind": "account",
+                "path": "vault.plan_id",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "Writable so the burned share of an SKR fee can leave the supply."
+          ],
+          "writable": true
+        },
+        {
+          "name": "vault_token",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "beneficiary",
+          "writable": true
+        },
+        {
+          "name": "beneficiary_token",
+          "docs": [
+            "The beneficiary's ATA, or any other token account it owns when the",
+            "beneficiary signs (e.g. its ATA was frozen or reassigned)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "treasury_token",
+          "docs": [
+            "The treasury's ATA; only needed when the payout leaves a fee for",
+            "the treasury (not for fee-free payouts such as a single NFT)."
+          ],
+          "writable": true,
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "config.treasury",
+                "account": "Config"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "Plans hold classic SPL Token mints only."
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "index",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "fund_skr_reserve",
+      "discriminator": [
+        147,
+        244,
+        156,
+        77,
+        169,
+        208,
+        230,
+        220
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "vault.plan_id",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "vault_token",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "owner_token",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "init_config",
+      "discriminator": [
+        23,
+        235,
+        115,
+        232,
+        168,
+        96,
+        1,
+        231
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "docs": [
+            "([`validate_treasury`])."
+          ]
+        },
+        {
+          "name": "program",
+          "address": "ACHVLMoLDM3YPpGbNST4cZW4Tf2jx6nzJGuusyLJHofL"
+        },
+        {
+          "name": "program_data"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "skr_mint",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "lockdown",
+      "discriminator": [
+        21,
+        66,
+        102,
+        35,
+        233,
+        188,
+        139,
+        9
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.owner",
+                "account": "Vault"
+              },
+              {
+                "kind": "account",
+                "path": "vault.plan_id",
+                "account": "Vault"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "propose_admin",
+      "discriminator": [
+        121,
+        214,
+        199,
+        212,
+        87,
+        39,
+        117,
+        234
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "new_admin",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "pulse",
+      "discriminator": [
+        192,
+        224,
+        96,
+        191,
+        190,
+        177,
+        63,
+        34
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.owner",
+                "account": "Vault"
+              },
+              {
+                "kind": "account",
+                "path": "vault.plan_id",
+                "account": "Vault"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "recover_legacy_vault",
+      "discriminator": [
+        202,
+        5,
+        20,
+        4,
+        206,
+        216,
+        105,
+        134
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "legacy",
+          "docs": [
+            "pinned to this owner's plan address here and its bytes are checked",
+            "in the handler."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "arg",
+                "path": "plan_id"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "plan_id",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "release_vested_sol",
+      "discriminator": [
+        136,
+        188,
+        48,
+        45,
+        14,
+        211,
+        200,
+        228
+      ],
+      "accounts": [
+        {
+          "name": "executor",
+          "docs": [
+            "Anyone: the beneficiary, a keeper, or the protocol's own bot."
+          ],
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.owner",
+                "account": "Vault"
+              },
+              {
+                "kind": "account",
+                "path": "vault.plan_id",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "beneficiary",
+          "writable": true
+        },
+        {
+          "name": "treasury",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "index",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "release_vested_token",
+      "discriminator": [
+        50,
+        241,
+        129,
+        168,
+        233,
+        106,
+        179,
+        16
+      ],
+      "accounts": [
+        {
+          "name": "executor",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.owner",
+                "account": "Vault"
+              },
+              {
+                "kind": "account",
+                "path": "vault.plan_id",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "Writable so the burned share of an SKR fee can leave the supply."
+          ],
+          "writable": true
+        },
+        {
+          "name": "vault_token",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "beneficiary",
+          "writable": true
+        },
+        {
+          "name": "beneficiary_token",
+          "docs": [
+            "The beneficiary's ATA, or any other token account it owns when the",
+            "beneficiary signs (e.g. its ATA was frozen or reassigned)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "treasury_token",
+          "docs": [
+            "The treasury's ATA; only needed when the payout leaves a fee for",
+            "the treasury (not for fee-free payouts such as a single NFT)."
+          ],
+          "writable": true,
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "config.treasury",
+                "account": "Config"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "Plans hold classic SPL Token mints only."
+          ],
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "index",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "revoke_vesting",
+      "discriminator": [
+        12,
+        252,
+        252,
+        168,
+        39,
+        101,
+        98,
+        9
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "vault.plan_id",
+                "account": "Vault"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "set_config",
+      "discriminator": [
+        108,
+        158,
+        154,
+        175,
+        212,
+        98,
+        52,
+        66
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "docs": [
+            "Pays the rent of a v1 config's reallocation."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "docs": [
+            "discriminator and admin are checked in [`load_config`]."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "docs": [
+            "([`validate_treasury`])."
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "fee_bps_public",
+          "type": "u16"
+        },
+        {
+          "name": "fee_bps_private",
+          "type": "u16"
+        },
+        {
+          "name": "skr_mint",
+          "type": "pubkey"
+        },
+        {
+          "name": "fee_bps_skr",
+          "type": "u16"
+        },
+        {
+          "name": "skr_burn_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "set_guard",
+      "discriminator": [
+        250,
+        44,
+        173,
+        235,
+        219,
+        76,
+        36,
+        198
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "vault.plan_id",
+                "account": "Vault"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "new_guard",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "set_price_feed",
+      "discriminator": [
+        13,
+        15,
+        231,
+        129,
+        61,
+        7,
+        28,
+        122
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "price_feed",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  105,
+                  99,
+                  101,
+                  95,
+                  102,
+                  101,
+                  101,
+                  100
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "mint",
+          "type": "pubkey"
+        },
+        {
+          "name": "feed_id",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "shard_id",
+          "type": "u16"
+        },
+        {
+          "name": "max_age_secs",
+          "type": "u32"
+        }
+      ]
+    },
+    {
+      "name": "skip_rule",
+      "discriminator": [
+        240,
+        82,
+        139,
+        70,
+        215,
+        222,
+        129,
+        174
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Anyone: usually a later beneficiary or the keeper."
+          ],
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.owner",
+                "account": "Vault"
+              },
+              {
+                "kind": "account",
+                "path": "vault.plan_id",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_token",
+          "docs": [
+            "The vault's ATA of the tier's mint; required for token tiers so the",
+            "skipped share can be reserved from the real balance."
+          ],
+          "optional": true
+        }
+      ],
+      "args": [
+        {
+          "name": "index",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "unlock",
+      "discriminator": [
+        101,
+        155,
+        40,
+        21,
+        158,
+        189,
+        56,
+        203
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "guardian",
+          "signer": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "vault.plan_id",
+                "account": "Vault"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "update_plan",
+      "discriminator": [
+        119,
+        112,
+        58,
+        60,
+        76,
+        205,
+        1,
+        100
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "vault.plan_id",
+                "account": "Vault"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "label",
+          "type": "string"
+        },
+        {
+          "name": "lock_secs",
+          "type": "i64"
+        },
+        {
+          "name": "skip_grace_secs",
+          "type": "i64"
+        },
+        {
+          "name": "rules",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "RuleInput"
+              }
+            }
+          }
+        },
+        {
+          "name": "guardian",
+          "type": {
+            "option": "pubkey"
+          }
+        }
+      ]
+    },
+    {
+      "name": "withdraw_skr_reserve",
+      "discriminator": [
+        142,
+        16,
+        23,
+        220,
+        111,
+        167,
+        150,
+        73
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "vault.plan_id",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "vault_token",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "owner_token",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "withdraw_sol",
+      "discriminator": [
+        145,
+        131,
+        74,
+        136,
+        65,
+        137,
+        42,
+        38
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "vault.plan_id",
+                "account": "Vault"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "withdraw_token",
+      "discriminator": [
+        136,
+        235,
+        181,
+        5,
+        101,
+        109,
+        57,
+        81
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "vault.plan_id",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "vault_token",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "owner_token",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Config",
+      "discriminator": [
+        155,
+        12,
+        170,
+        224,
+        30,
+        250,
+        204,
+        130
+      ]
+    },
+    {
+      "name": "PriceFeed",
+      "discriminator": [
+        189,
+        103,
+        252,
+        23,
+        152,
+        35,
+        243,
+        156
+      ]
+    },
+    {
+      "name": "Vault",
+      "discriminator": [
+        211,
+        8,
+        232,
+        43,
+        2,
+        152,
+        117,
+        119
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "AdminChanged",
+      "discriminator": [
+        232,
+        34,
+        31,
+        226,
+        62,
+        18,
+        19,
+        114
+      ]
+    },
+    {
+      "name": "AdminProposed",
+      "discriminator": [
+        129,
+        249,
+        226,
+        227,
+        199,
+        82,
+        110,
+        243
+      ]
+    },
+    {
+      "name": "FeeBurned",
+      "discriminator": [
+        145,
+        91,
+        45,
+        171,
+        189,
+        224,
+        44,
+        218
+      ]
+    },
+    {
+      "name": "LegacyVaultRecovered",
+      "discriminator": [
+        35,
+        99,
+        201,
+        124,
+        122,
+        115,
+        133,
+        76
+      ]
+    },
+    {
+      "name": "LockedDown",
+      "discriminator": [
+        6,
+        179,
+        104,
+        61,
+        162,
+        7,
+        180,
+        0
+      ]
+    },
+    {
+      "name": "PolicyUpdated",
+      "discriminator": [
+        225,
+        112,
+        112,
+        67,
+        95,
+        236,
+        245,
+        161
+      ]
+    },
+    {
+      "name": "PriceFeedSet",
+      "discriminator": [
+        194,
+        47,
+        73,
+        53,
+        154,
+        209,
+        254,
+        201
+      ]
+    },
+    {
+      "name": "Pulsed",
+      "discriminator": [
+        50,
+        157,
+        171,
+        237,
+        205,
+        247,
+        194,
+        232
+      ]
+    },
+    {
+      "name": "RuleExecuted",
+      "discriminator": [
+        19,
+        126,
+        250,
+        217,
+        172,
+        72,
+        222,
+        63
+      ]
+    },
+    {
+      "name": "RuleSkipped",
+      "discriminator": [
+        157,
+        196,
+        126,
+        255,
+        171,
+        192,
+        79,
+        87
+      ]
+    },
+    {
+      "name": "SkrFeePaid",
+      "discriminator": [
+        255,
+        149,
+        252,
+        158,
+        12,
+        54,
+        65,
+        163
+      ]
+    },
+    {
+      "name": "Unlocked",
+      "discriminator": [
+        219,
+        104,
+        74,
+        123,
+        174,
+        92,
+        182,
+        120
+      ]
+    },
+    {
+      "name": "VaultCreated",
+      "discriminator": [
+        117,
+        25,
+        120,
+        254,
+        75,
+        236,
+        78,
+        115
+      ]
+    },
+    {
+      "name": "VestingRevoked",
+      "discriminator": [
+        215,
+        148,
+        193,
+        127,
+        237,
+        245,
+        90,
+        75
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "Unauthorized",
+      "msg": "Signer is not allowed to perform this action"
+    },
+    {
+      "code": 6001,
+      "name": "FeeTooHigh",
+      "msg": "Fee exceeds the 5% cap"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidDuration",
+      "msg": "Lock or grace duration out of range"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidRules",
+      "msg": "Rules must be 1-8, sorted by delay, with valid amounts and beneficiaries"
+    },
+    {
+      "code": 6004,
+      "name": "InvalidGuardian",
+      "msg": "Guardian cannot be the owner, the guard key or a beneficiary"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidGuard",
+      "msg": "Guard key must differ from the owner, beneficiaries and guardian"
+    },
+    {
+      "code": 6006,
+      "name": "VaultLocked",
+      "msg": "Vault is locked down"
+    },
+    {
+      "code": 6007,
+      "name": "RuleNotDue",
+      "msg": "The owner is still within this rule's inactivity window"
+    },
+    {
+      "code": 6008,
+      "name": "RuleAlreadyExecuted",
+      "msg": "Rule already executed"
+    },
+    {
+      "code": 6009,
+      "name": "RuleOutOfOrder",
+      "msg": "An earlier rule for the same asset must execute first"
+    },
+    {
+      "code": 6010,
+      "name": "WrongAsset",
+      "msg": "Rule asset does not match this instruction or mint"
+    },
+    {
+      "code": 6011,
+      "name": "InvalidRuleIndex",
+      "msg": "Rule index out of range"
+    },
+    {
+      "code": 6012,
+      "name": "InsufficientFunds",
+      "msg": "Amount exceeds the withdrawable balance"
+    },
+    {
+      "code": 6013,
+      "name": "NoGuardian",
+      "msg": "Vault has no guardian"
+    },
+    {
+      "code": 6014,
+      "name": "GuardianCooldown",
+      "msg": "Guardian lockdown is cooling down"
+    },
+    {
+      "code": 6015,
+      "name": "PlanCompleted",
+      "msg": "Every tier of this plan has released; it can no longer be checked in on or changed"
+    },
+    {
+      "code": 6016,
+      "name": "LabelTooLong",
+      "msg": "Plan label is too long"
+    },
+    {
+      "code": 6017,
+      "name": "OwnerConfirmationRequired",
+      "msg": "The owner's wallet must confirm before the guard key can check in again"
+    },
+    {
+      "code": 6018,
+      "name": "NothingToPay",
+      "msg": "Nothing to pay for this tier yet"
+    },
+    {
+      "code": 6019,
+      "name": "BeneficiaryCannotReceive",
+      "msg": "Beneficiary account cannot receive this amount"
+    },
+    {
+      "code": 6020,
+      "name": "SkipTooEarly",
+      "msg": "This tier can only be skipped once the plan's grace period has passed"
+    },
+    {
+      "code": 6021,
+      "name": "WrongPlanKind",
+      "msg": "This instruction does not apply to this kind of plan"
+    },
+    {
+      "code": 6022,
+      "name": "InvalidVesting",
+      "msg": "Vesting schedules need a total, a cliff no longer than the duration, a duration up to 20 years, and an installment period of 0 or 60s up to the shortest duration"
+    },
+    {
+      "code": 6023,
+      "name": "NotRevocable",
+      "msg": "This vesting plan cannot be revoked"
+    },
+    {
+      "code": 6024,
+      "name": "AlreadyRevoked",
+      "msg": "Vesting was already revoked"
+    },
+    {
+      "code": 6025,
+      "name": "FundsCommitted",
+      "msg": "Those funds are committed to vesting beneficiaries"
+    },
+    {
+      "code": 6026,
+      "name": "InvalidConfig",
+      "msg": "Treasury must be a system-owned wallet, and the SKR burn share at most 100%"
+    },
+    {
+      "code": 6027,
+      "name": "MathOverflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6028,
+      "name": "NotLegacyVault",
+      "msg": "Not a plan account in an older layout"
+    },
+    {
+      "code": 6029,
+      "name": "DeprecatedSubscriptionDisabled",
+      "msg": "Unused"
+    },
+    {
+      "code": 6030,
+      "name": "DeprecatedInvalidSubscription",
+      "msg": "Unused"
+    },
+    {
+      "code": 6031,
+      "name": "UnsupportedMint",
+      "msg": "Only classic SPL Token mints can be put in a plan"
+    },
+    {
+      "code": 6032,
+      "name": "TreasuryAccountRequired",
+      "msg": "This payout charges a fee, so the treasury's token account is required"
+    },
+    {
+      "code": 6033,
+      "name": "SkrFeeAccountsRequired",
+      "msg": "This plan has an SKR fee reserve: pass the price feeds and SKR accounts"
+    },
+    {
+      "code": 6034,
+      "name": "InvalidSkrFeeAccounts",
+      "msg": "A price feed or SKR fee account does not match the registry, plan or config"
+    },
+    {
+      "code": 6035,
+      "name": "FeeReserveNotEmpty",
+      "msg": "Withdraw the SKR fee reserve first"
+    }
+  ],
+  "types": [
+    {
+      "name": "AdminChanged",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "old_admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_admin",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AdminProposed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "pending_admin",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AmountMode",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Fixed"
+          },
+          {
+            "name": "Percent"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Config",
+      "docs": [
+        "Layout v2. v1 accounts (77 bytes, up to `bump`) are migrated by",
+        "`set_config`, which reallocates them; until then only `set_config` can",
+        "read them. New fields must be carved out of `_reserved`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury",
+            "docs": [
+              "System-owned wallet that receives fees (and owns the fee ATAs)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_bps_public",
+            "docs": [
+              "Release fee for the plain Solana rail."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "fee_bps_private",
+            "docs": [
+              "Release fee for private rails (Cloak, Zcash)."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "skr_mint",
+            "docs": [
+              "Payouts in this mint pay `fee_bps_skr` on any rail, and",
+              "`skr_burn_bps` of that fee is burned. Default = no SKR discount."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_bps_skr",
+            "type": "u16"
+          },
+          {
+            "name": "skr_burn_bps",
+            "type": "u16"
+          },
+          {
+            "name": "pending_admin",
+            "docs": [
+              "Proposed next admin until it accepts; default = none."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "_reserved",
+            "docs": [
+              "Zeroed space for future fields."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeeBurned",
+      "docs": [
+        "The burned share of an SKR payout fee."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LegacyVaultRecovered",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "plan_id",
+            "type": "u16"
+          },
+          {
+            "name": "data_len",
+            "type": "u32"
+          },
+          {
+            "name": "lamports",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LockedDown",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "by",
+            "type": "pubkey"
+          },
+          {
+            "name": "until",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PlanKind",
+      "docs": [
+        "Inheritance plans release tiers after owner silence; vesting plans",
+        "release linearly over time from a fixed start, whatever the owner does."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Inheritance"
+          },
+          {
+            "name": "Vesting"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PolicyUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "rules",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PriceFeed",
+      "docs": [
+        "Admin registry entry: the Pyth feed that prices `mint` (SOL under the",
+        "wrapped SOL mint) and the one price account payouts may read it from."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "feed_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "price_account",
+            "docs": [
+              "The canonical push-oracle account of `feed_id`, kept fresh by Pyth or",
+              "by our pusher. Executors cannot substitute another update."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "max_age_secs",
+            "docs": [
+              "Older prices are unusable; 0 disables the feed."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PriceFeedSet",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "feed_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "price_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "max_age_secs",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Pulsed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "by",
+            "type": "pubkey"
+          },
+          {
+            "name": "streak",
+            "type": "u32"
+          },
+          {
+            "name": "at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Rail",
+      "docs": [
+        "Delivery rail. On-chain every rail pays a Solana key; for private rails",
+        "that key is a fresh claim key whose app routes the funds onward."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Solana"
+          },
+          {
+            "name": "Cloak"
+          },
+          {
+            "name": "Zcash"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Rule",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "beneficiary",
+            "type": "pubkey"
+          },
+          {
+            "name": "rail",
+            "type": {
+              "defined": {
+                "name": "Rail"
+              }
+            }
+          },
+          {
+            "name": "after_secs",
+            "type": "i64"
+          },
+          {
+            "name": "mint",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "mode",
+            "type": {
+              "defined": {
+                "name": "AmountMode"
+              }
+            }
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "executed_at",
+            "docs": [
+              "0 while pending."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "paid",
+            "docs": [
+              "Net amount the beneficiary received."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "skipped_at",
+            "docs": [
+              "When later tiers were allowed to run past this one because it could",
+              "not pay within the grace period; 0 if never skipped. A skipped tier",
+              "stays claimable by its own beneficiary."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "reserved",
+            "docs": [
+              "Share set aside for a skipped tier, so skipping never moves value to",
+              "later tiers. 0 = recompute from the balance when claimed."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "duration_secs",
+            "docs": [
+              "Vesting only: seconds from the plan start to fully vested (the cliff",
+              "is `after_secs`, the total is `amount`). 0 for inheritance tiers."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "released",
+            "docs": [
+              "Vesting only: gross amount released so far."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RuleExecuted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u8"
+          },
+          {
+            "name": "beneficiary",
+            "type": "pubkey"
+          },
+          {
+            "name": "rail",
+            "type": {
+              "defined": {
+                "name": "Rail"
+              }
+            }
+          },
+          {
+            "name": "mint",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "fee",
+            "type": "u64"
+          },
+          {
+            "name": "by",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RuleInput",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "beneficiary",
+            "type": "pubkey"
+          },
+          {
+            "name": "rail",
+            "type": {
+              "defined": {
+                "name": "Rail"
+              }
+            }
+          },
+          {
+            "name": "after_secs",
+            "docs": [
+              "Seconds of owner silence (since the last pulse) before this rule fires."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "mint",
+            "docs": [
+              "`None` = SOL."
+            ],
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "mode",
+            "type": {
+              "defined": {
+                "name": "AmountMode"
+              }
+            }
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RuleSkipped",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u8"
+          },
+          {
+            "name": "reserved",
+            "type": "u64"
+          },
+          {
+            "name": "by",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SkrFeePaid",
+      "docs": [
+        "A release fee paid in SKR from the plan's fee reserve instead of in the",
+        "payout asset; `burned` of `fee` was burned, the rest went to the",
+        "treasury."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u8"
+          },
+          {
+            "name": "fee",
+            "type": "u64"
+          },
+          {
+            "name": "burned",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Unlocked",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Vault",
+      "docs": [
+        "Layout (final for mainnet). Clients read `owner` at byte 8, `plan_id` at",
+        "40, `guard` at 42 and the `guardian` option at 74 (after the 8-byte",
+        "discriminator); everything from `guardian` on sits at variable offsets.",
+        "New fields must be carved out of `_reserved` (keeping the total size), so",
+        "existing accounts decode with them zeroed and need no migration."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "plan_id",
+            "docs": [
+              "Owner-chosen id; one owner can hold many independent plans."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "guard",
+            "docs": [
+              "Device key: may only pulse and lock down, never move funds."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "guardian",
+            "docs": [
+              "Trusted contact: may lock down (rate-limited) and co-sign early unlock."
+            ],
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "_reserved_interval",
+            "docs": [
+              "Former check-in cadence slot, no longer used. Zero on new plans;",
+              "older accounts keep their stale bytes, which are never read."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
+          },
+          {
+            "name": "lock_secs",
+            "type": "i64"
+          },
+          {
+            "name": "skip_grace_secs",
+            "docs": [
+              "Owner-chosen time a due tier gets to pay before anyone may skip it."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "last_pulse",
+            "type": "i64"
+          },
+          {
+            "name": "owner_last_seen",
+            "docs": [
+              "Last wallet-signed (owner) action; bounds guard-only check-ins."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "locked_until",
+            "type": "i64"
+          },
+          {
+            "name": "guardian_ready_at",
+            "docs": [
+              "Earliest time the guardian may lock down again."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "total_pulses",
+            "type": "u64"
+          },
+          {
+            "name": "streak",
+            "type": "u32"
+          },
+          {
+            "name": "best_streak",
+            "type": "u32"
+          },
+          {
+            "name": "kind",
+            "type": {
+              "defined": {
+                "name": "PlanKind"
+              }
+            }
+          },
+          {
+            "name": "start_at",
+            "docs": [
+              "Vesting: when every schedule starts vesting."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "revocable",
+            "docs": [
+              "Vesting: the owner may stop future vesting (already vested stays)."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "revoked_at",
+            "docs": [
+              "Vesting: when it was revoked; 0 if never."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "rent_payer",
+            "docs": [
+              "Who funded the account rent (the owner, or a fee sponsor). Closing",
+              "the plan returns the rent to them, never to someone else."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "rent_paid",
+            "docs": [
+              "Lamports the rent payer deposited at creation. Never withdrawable,",
+              "and exactly this much goes back to `rent_payer` on close, whatever",
+              "the rent sysvar says later."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "rules",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "Rule"
+                }
+              }
+            }
+          },
+          {
+            "name": "label",
+            "docs": [
+              "Display name, e.g. \"Kids\" or \"Emergency fund\"."
+            ],
+            "type": "string"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "stipend_paid",
+            "docs": [
+              "Bit `i` set once rule `i`'s claim key got its gas stipend, so a",
+              "private-rail beneficiary is topped up at most once per rule."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "vest_period_secs",
+            "docs": [
+              "Vesting: installment length. Vesting unlocks only at whole multiples",
+              "of it from `start_at` (fully at `duration_secs`); 0 = continuous."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "skr_fee_reserve",
+            "docs": [
+              "SKR the owner set aside to pay release fees in SKR (see",
+              "`fund_skr_reserve`). Held in the vault's ATA of `skr_reserve_mint`",
+              "but never paid to tiers."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "skr_reserve_mint",
+            "docs": [
+              "Mint the reserve is held in: the config's SKR mint when it was",
+              "funded, so a later SKR mint change cannot strand it."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "_reserved",
+            "docs": [
+              "Zeroed space for future fields; see the layout note above."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                15
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "VaultCreated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "plan_id",
+            "type": "u16"
+          },
+          {
+            "name": "rules",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VestingInput",
+      "docs": [
+        "One beneficiary's vesting schedule: `total` of `mint` (None = SOL) vests",
+        "linearly from `start_at` over `duration_secs` (in installments when the",
+        "plan has a vesting period); nothing is claimable before `cliff_secs`",
+        "have passed."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "beneficiary",
+            "type": "pubkey"
+          },
+          {
+            "name": "rail",
+            "type": {
+              "defined": {
+                "name": "Rail"
+              }
+            }
+          },
+          {
+            "name": "mint",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "total",
+            "type": "u64"
+          },
+          {
+            "name": "cliff_secs",
+            "type": "i64"
+          },
+          {
+            "name": "duration_secs",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VestingRevoked",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "at",
+            "type": "i64"
+          }
+        ]
+      }
+    }
+  ]
+}

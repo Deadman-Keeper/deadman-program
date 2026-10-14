@@ -1,0 +1,7 @@
+# Both crates come in only through litesvm (a dev-dependency), never the
+# deployed program.
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0097", # rand 0.7.3: needs a custom logger calling rand::rng(); the tests have none
+    "RUSTSEC-2021-0139", # ansi_term: unmaintained, used by litesvm's log output
+]

@@ -155,7 +155,7 @@ pub fn handle_create_plan(
         vault: key,
         owner,
         plan_id,
-        rules: vault.rules.len() as u8,
+        rules: u8::try_from(vault.rules.len()).map_err(|_| DeadmanError::MathOverflow)?,
     });
     Ok(())
 }
@@ -197,7 +197,7 @@ pub fn handle_update_plan(
     vault.record_owner_pulse(now)?;
     emit!(PolicyUpdated {
         vault: vault.key(),
-        rules: vault.rules.len() as u8,
+        rules: u8::try_from(vault.rules.len()).map_err(|_| DeadmanError::MathOverflow)?,
     });
     Ok(())
 }
@@ -432,7 +432,7 @@ pub fn handle_create_vesting(
         vault: key,
         owner,
         plan_id,
-        rules: vault.rules.len() as u8,
+        rules: u8::try_from(vault.rules.len()).map_err(|_| DeadmanError::MathOverflow)?,
     });
     Ok(())
 }

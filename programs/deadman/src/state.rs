@@ -701,7 +701,8 @@ impl Vault {
             require!(
                 amount_ok
                     && (MIN_RULE_DELAY_SECS..=MAX_RULE_DELAY_SECS).contains(&r.after_secs)
-                    && (i == 0 || rules[i - 1].after_secs <= r.after_secs)
+                    && i.checked_sub(1)
+                        .is_none_or(|p| rules[p].after_secs <= r.after_secs)
                     && r.beneficiary != Pubkey::default()
                     && r.beneficiary != self.owner
                     && r.beneficiary != self.guard

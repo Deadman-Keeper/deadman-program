@@ -76,7 +76,7 @@ fn vault_transfer<'info>(
         amount,
         mint.decimals,
     )?;
-    let mut infos = Vec::with_capacity(4 + extra.len());
+    let mut infos = Vec::with_capacity(extra.len().saturating_add(4));
     infos.push(from.to_account_info());
     infos.push(mint.to_account_info());
     infos.push(to);

@@ -75,12 +75,10 @@ const BENS: usize = 4;
 const TOKEN_PROGRAM: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const ADMIN: Pubkey = Pubkey::new_from_array([7u8; 32]);
 const NATIVE_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
-const PYTH_RECEIVER: Pubkey = pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
-const PUSH_ORACLE: Pubkey = pubkey!("pythWSnswVUd12oZpeFP8e9CVaEqJg25g1Vtc2biRsT");
-const PRICE_UPDATE_DISC: [u8; 8] = [0x22, 0xf1, 0x23, 0x63, 0x9d, 0x7e, 0xf4, 0xcd];
-const SOL_FEED: &str = "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
-const SKR_FEED: &str = "38846ec4d0dbe808091817f5c0d6ab8058e25422348ddf97db52b6c378a93bf9";
-const MAX_PRICE_AGE: u32 = 120;
+const RATER: Pubkey = Pubkey::new_from_array([8u8; 32]);
+/// SKR base units per whole SOL ($150 SOL, $0.02 SKR) and per whole USDC.
+const SKR_PER_SOL: u64 = 7_500_000_000;
+const SKR_PER_USDC: u64 = 50_000_000;
 
 #[derive(Clone, Copy, Debug)]
 enum Op {
@@ -139,10 +137,8 @@ struct World {
     stipends: Vec<Vec<u8>>,
     lamport_keys: Vec<Pubkey>,
     token_keys: Vec<Pubkey>,
-    /// SKR worlds: PriceFeed PDAs and canonical price accounts of SOL and
-    /// SKR (in that order).
-    feeds: Vec<Pubkey>,
-    prices: Vec<Pubkey>,
+    /// SKR worlds: the SkrRates account.
+    rates: Pubkey,
 }
 
 #[derive(FuzzTestMethods)]
@@ -150,10 +146,6 @@ struct FuzzTest {
     trident: Trident,
     fuzz_accounts: AccountAddresses,
     w: World,
-}
-
-fn feed_id(hex: &str) -> [u8; 32] {
-    hex::decode(hex).unwrap().try_into().unwrap()
 }
 
 fn bytes<T: BorshSerialize>(t: &T) -> Vec<u8> {
@@ -314,19 +306,16 @@ impl FuzzTest {
             .0
     }
 
-    fn price_feed_pda(&self, mint: &Pubkey) -> Pubkey {
+    fn rates_pda(&self) -> Pubkey {
         self.trident
-            .find_program_address(&[b"price_feed", mint.as_ref()], &program_id())
+            .find_program_address(&[b"skr_rates"], &program_id())
             .0
     }
 
     /// Remaining accounts of a SOL payout's SKR fee path.
     fn skr_fee_accounts(&self, p: usize) -> Vec<AccountMeta> {
         vec![
-            AccountMeta::new_readonly(self.w.feeds[0], false),
-            AccountMeta::new_readonly(self.w.prices[0], false),
-            AccountMeta::new_readonly(self.w.feeds[1], false),
-            AccountMeta::new_readonly(self.w.prices[1], false),
+            AccountMeta::new_readonly(self.w.rates, false),
             AccountMeta::new(self.w.vault_atas[p], false),
             AccountMeta::new(self.w.mint, false),
             AccountMeta::new(self.w.treasury_ata, false),
@@ -334,48 +323,25 @@ impl FuzzTest {
         ]
     }
 
-    /// Writes a random `PriceUpdateV2` for SOL and SKR at their canonical
-    /// accounts: mostly usable, sometimes stale, partial, wide, negative or
-    /// of the wrong feed.
-    fn post_prices(&mut self) {
-        let now = self.trident.get_current_timestamp();
-        for (k, feed, base) in [(0, SOL_FEED, 15_000_000_000i64), (1, SKR_FEED, 2_000_000)] {
-            let kind = self.trident.random_from_range(0..16u8);
-            let mut price = self.trident.random_from_range(base / 4..base * 4);
-            if kind == 6 {
-                price = -price;
-            }
-            let conf = price.unsigned_abs() / if kind == 5 { 10 } else { 1_000 };
-            let age = if kind == 3 {
-                self.trident
-                    .random_from_range(i64::from(MAX_PRICE_AGE) + 1..10_000)
-            } else {
-                self.trident.random_from_range(0..60i64)
-            };
-            let id = feed_id(if kind == 7 { SOL_FEED } else { feed });
-            let id = if kind == 7 && k == 0 {
-                feed_id(SKR_FEED)
-            } else {
-                id
-            };
-            let mut d = PRICE_UPDATE_DISC.to_vec();
-            d.extend_from_slice(&[9u8; 32]);
-            if kind == 4 {
-                d.extend_from_slice(&[0, 3]);
-            } else {
-                d.push(1);
-            }
-            d.extend_from_slice(&id);
-            d.extend_from_slice(&price.to_le_bytes());
-            d.extend_from_slice(&conf.to_le_bytes());
-            d.extend_from_slice(&(-8i32).to_le_bytes());
-            d.extend_from_slice(&(now - age).to_le_bytes());
-            d.resize(134, 0);
-            let mut acc = AccountSharedData::new(self.rent_min(134), 134, &PYTH_RECEIVER);
-            acc.set_data_from_slice(&d);
-            let addr = self.w.prices[k];
-            self.trident.set_account_custom(&addr, &acc);
-        }
+    /// The rate script's update: usually within 20% of the current SOL
+    /// rate, sometimes far outside (refused unless within the day's
+    /// reference), sometimes 0 (disabled).
+    fn update_rates(&mut self) {
+        let kind = self.trident.random_from_range(0..16u8);
+        let sol = match kind {
+            0 => 0,
+            1 => self.trident.random_from_range(1..SKR_PER_SOL * 4),
+            _ => self
+                .trident
+                .random_from_range(SKR_PER_SOL * 8 / 10..=SKR_PER_SOL * 12 / 10),
+        };
+        let ix = UpdateSkrRatesInstruction::data(UpdateSkrRatesInstructionData::new(
+            sol,
+            SKR_PER_USDC,
+        ))
+        .accounts(UpdateSkrRatesInstructionAccounts::new(RATER, self.w.rates))
+        .instruction();
+        self.exec(&[ix], "update_skr_rates", Op::Other);
     }
 
     /// Plan creation and edits take the token mint in the remaining accounts.
@@ -1096,34 +1062,24 @@ impl FuzzTest {
             self.set_config();
         }
         if self.w.skr {
-            let mints = [NATIVE_MINT, self.w.mint];
-            self.w.feeds = mints.iter().map(|m| self.price_feed_pda(m)).collect();
-            self.w.lamport_keys.extend(self.w.feeds.clone());
-            for (mint, feed) in mints.into_iter().zip([SOL_FEED, SKR_FEED]) {
-                let id = feed_id(feed);
-                let price = self
-                    .trident
-                    .find_program_address(&[&0u16.to_le_bytes(), &id], &PUSH_ORACLE)
-                    .0;
-                self.w.prices.push(price);
-                let ix = SetPriceFeedInstruction::data(SetPriceFeedInstructionData::new(
-                    mint,
-                    id,
-                    0,
-                    MAX_PRICE_AGE,
-                ))
-                .accounts(SetPriceFeedInstructionAccounts::new(
-                    ADMIN,
-                    self.config_pda(),
-                    self.price_feed_pda(&mint),
-                ))
-                .instruction();
-                inv!(
-                    self.exec(&[ix], "set_price_feed", Op::Other),
-                    "set_price_feed failed"
-                );
-            }
-            self.post_prices();
+            self.w.rates = self.rates_pda();
+            self.w.lamport_keys.push(self.w.rates);
+            let ix = SetSkrRatesInstruction::data(SetSkrRatesInstructionData::new(
+                RATER,
+                Pubkey::new_unique(),
+                SKR_PER_SOL,
+                SKR_PER_USDC,
+            ))
+            .accounts(SetSkrRatesInstructionAccounts::new(
+                ADMIN,
+                self.config_pda(),
+                self.w.rates,
+            ))
+            .instruction();
+            inv!(
+                self.exec(&[ix], "set_skr_rates", Op::Other),
+                "set_skr_rates failed"
+            );
         }
     }
 
@@ -1302,9 +1258,9 @@ impl FuzzTest {
         // SKR worlds usually pass the SKR fee accounts; without them a plan
         // with a reserve cannot pay a SOL fee.
         let extra = if self.w.skr && self.trident.random_from_range(0..8u8) != 0 {
-            // Prices go stale across warps; usually refresh them first.
+            // Rates go stale across warps; usually refresh them first.
             if self.trident.random_bool() {
-                self.post_prices();
+                self.update_rates();
             }
             self.skr_fee_accounts(p)
         } else {
@@ -1539,9 +1495,9 @@ impl FuzzTest {
     }
 
     #[flow(weight = 3)]
-    fn post_price(&mut self) {
+    fn update_rate(&mut self) {
         if self.w.skr {
-            self.post_prices();
+            self.update_rates();
         }
     }
 

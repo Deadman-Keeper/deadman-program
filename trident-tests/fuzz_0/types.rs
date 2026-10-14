@@ -26,7 +26,7 @@ pub mod deadman {
 
     /// Returns the program ID for deadman
     pub fn program_id() -> Pubkey {
-        pubkey!("ACHVLMoLDM3YPpGbNST4cZW4Tf2jx6nzJGuusyLJHofL")
+        pubkey!("BonEyRsg5PJLwLyceeRAu2QwgduaHcqvPHoerz9uZwK")
     }
 
     // ------------------------------------------------------------------------
@@ -1108,7 +1108,7 @@ pub mod deadman {
             self.accounts.treasury = AccountMeta::new_readonly(accounts.treasury, false);
 
             self.accounts.program = AccountMeta::new_readonly(
-                pubkey!("ACHVLMoLDM3YPpGbNST4cZW4Tf2jx6nzJGuusyLJHofL"),
+                pubkey!("BonEyRsg5PJLwLyceeRAu2QwgduaHcqvPHoerz9uZwK"),
                 false,
             );
 
@@ -2178,96 +2178,104 @@ pub mod deadman {
     }
 
     // ....................................................................
-    // Instruction: SetPriceFeed
+    // Instruction: SetSkrRates
     // ....................................................................
 
-    /// Main instruction struct for SetPriceFeed
-    pub struct SetPriceFeedInstruction {
-        pub accounts: SetPriceFeedInstructionAccountMetas,
-        pub data: SetPriceFeedInstructionData,
+    /// Main instruction struct for SetSkrRates
+    pub struct SetSkrRatesInstruction {
+        pub accounts: SetSkrRatesInstructionAccountMetas,
+        pub data: SetSkrRatesInstructionData,
         pub remaining_accounts: Vec<AccountMeta>,
     }
 
-    /// Account metadata for SetPriceFeed instruction
+    /// Account metadata for SetSkrRates instruction
     #[derive(Debug, Clone, Default)]
-    pub struct SetPriceFeedInstructionAccountMetas {
+    pub struct SetSkrRatesInstructionAccountMetas {
         pub admin: AccountMeta,
 
         pub config: AccountMeta,
 
-        pub price_feed: AccountMeta,
+        pub skr_rates: AccountMeta,
 
         pub system_program: AccountMeta,
     }
 
-    /// Account pubkeys for SetPriceFeed instruction
+    /// Account pubkeys for SetSkrRates instruction
     #[derive(Debug, Clone)]
-    pub struct SetPriceFeedInstructionAccounts {
+    pub struct SetSkrRatesInstructionAccounts {
         pub admin: Pubkey,
 
         pub config: Pubkey,
 
-        pub price_feed: Pubkey,
+        pub skr_rates: Pubkey,
     }
 
-    impl SetPriceFeedInstructionAccounts {
-        pub fn new(admin: Pubkey, config: Pubkey, price_feed: Pubkey) -> Self {
+    impl SetSkrRatesInstructionAccounts {
+        pub fn new(admin: Pubkey, config: Pubkey, skr_rates: Pubkey) -> Self {
             Self {
                 admin,
 
                 config,
 
-                price_feed,
+                skr_rates,
             }
         }
     }
 
-    /// Instruction data for SetPriceFeed
+    /// Instruction data for SetSkrRates
     #[derive(Debug, BorshDeserialize, BorshSerialize, Clone)]
-    pub struct SetPriceFeedInstructionData {
-        pub mint: Pubkey,
+    pub struct SetSkrRatesInstructionData {
+        pub authority: Pubkey,
 
-        pub feed_id: [u8; 32],
+        pub usdc_mint: Pubkey,
 
-        pub shard_id: u16,
+        pub skr_per_sol: u64,
 
-        pub max_age_secs: u32,
+        pub skr_per_usdc: u64,
     }
 
-    impl SetPriceFeedInstructionData {
-        pub fn new(mint: Pubkey, feed_id: [u8; 32], shard_id: u16, max_age_secs: u32) -> Self {
+    impl SetSkrRatesInstructionData {
+        pub fn new(
+            authority: Pubkey,
+
+            usdc_mint: Pubkey,
+
+            skr_per_sol: u64,
+
+            skr_per_usdc: u64,
+        ) -> Self {
             Self {
-                mint,
+                authority,
 
-                feed_id,
+                usdc_mint,
 
-                shard_id,
+                skr_per_sol,
 
-                max_age_secs,
+                skr_per_usdc,
             }
         }
     }
 
-    /// Implementation for SetPriceFeedInstruction
-    impl SetPriceFeedInstruction {
+    /// Implementation for SetSkrRatesInstruction
+    impl SetSkrRatesInstruction {
         fn discriminator() -> [u8; 8] {
-            [13u8, 15u8, 231u8, 129u8, 61u8, 7u8, 28u8, 122u8]
+            [215u8, 57u8, 237u8, 92u8, 24u8, 226u8, 105u8, 13u8]
         }
 
-        pub fn data(data: SetPriceFeedInstructionData) -> Self {
+        pub fn data(data: SetSkrRatesInstructionData) -> Self {
             Self {
-                accounts: SetPriceFeedInstructionAccountMetas::default(),
+                accounts: SetSkrRatesInstructionAccountMetas::default(),
                 data,
                 remaining_accounts: Vec::new(),
             }
         }
 
-        pub fn accounts(mut self, accounts: SetPriceFeedInstructionAccounts) -> Self {
+        pub fn accounts(mut self, accounts: SetSkrRatesInstructionAccounts) -> Self {
             self.accounts.admin = AccountMeta::new(accounts.admin, true);
 
             self.accounts.config = AccountMeta::new_readonly(accounts.config, false);
 
-            self.accounts.price_feed = AccountMeta::new(accounts.price_feed, false);
+            self.accounts.skr_rates = AccountMeta::new(accounts.skr_rates, false);
 
             self.accounts.system_program =
                 AccountMeta::new_readonly(pubkey!("11111111111111111111111111111111"), false);
@@ -2287,7 +2295,7 @@ pub mod deadman {
 
             metas.push(self.accounts.config.clone());
 
-            metas.push(self.accounts.price_feed.clone());
+            metas.push(self.accounts.skr_rates.clone());
 
             metas.push(self.accounts.system_program.clone());
 
@@ -2626,6 +2634,110 @@ pub mod deadman {
             metas.push(self.accounts.owner.clone());
 
             metas.push(self.accounts.vault.clone());
+
+            metas.extend(self.remaining_accounts.clone());
+            metas
+        }
+
+        pub fn instruction(&self) -> Instruction {
+            let mut buffer: Vec<u8> = Vec::new();
+
+            buffer.extend_from_slice(&Self::discriminator());
+
+            self.data.serialize(&mut buffer).unwrap();
+
+            Instruction::new_with_bytes(program_id(), &buffer, self.to_account_metas())
+        }
+    }
+
+    // ....................................................................
+    // Instruction: UpdateSkrRates
+    // ....................................................................
+
+    /// Main instruction struct for UpdateSkrRates
+    pub struct UpdateSkrRatesInstruction {
+        pub accounts: UpdateSkrRatesInstructionAccountMetas,
+        pub data: UpdateSkrRatesInstructionData,
+        pub remaining_accounts: Vec<AccountMeta>,
+    }
+
+    /// Account metadata for UpdateSkrRates instruction
+    #[derive(Debug, Clone, Default)]
+    pub struct UpdateSkrRatesInstructionAccountMetas {
+        pub authority: AccountMeta,
+
+        pub skr_rates: AccountMeta,
+    }
+
+    /// Account pubkeys for UpdateSkrRates instruction
+    #[derive(Debug, Clone)]
+    pub struct UpdateSkrRatesInstructionAccounts {
+        pub authority: Pubkey,
+
+        pub skr_rates: Pubkey,
+    }
+
+    impl UpdateSkrRatesInstructionAccounts {
+        pub fn new(authority: Pubkey, skr_rates: Pubkey) -> Self {
+            Self {
+                authority,
+
+                skr_rates,
+            }
+        }
+    }
+
+    /// Instruction data for UpdateSkrRates
+    #[derive(Debug, BorshDeserialize, BorshSerialize, Clone)]
+    pub struct UpdateSkrRatesInstructionData {
+        pub skr_per_sol: u64,
+
+        pub skr_per_usdc: u64,
+    }
+
+    impl UpdateSkrRatesInstructionData {
+        pub fn new(skr_per_sol: u64, skr_per_usdc: u64) -> Self {
+            Self {
+                skr_per_sol,
+
+                skr_per_usdc,
+            }
+        }
+    }
+
+    /// Implementation for UpdateSkrRatesInstruction
+    impl UpdateSkrRatesInstruction {
+        fn discriminator() -> [u8; 8] {
+            [155u8, 34u8, 234u8, 200u8, 238u8, 157u8, 12u8, 115u8]
+        }
+
+        pub fn data(data: UpdateSkrRatesInstructionData) -> Self {
+            Self {
+                accounts: UpdateSkrRatesInstructionAccountMetas::default(),
+                data,
+                remaining_accounts: Vec::new(),
+            }
+        }
+
+        pub fn accounts(mut self, accounts: UpdateSkrRatesInstructionAccounts) -> Self {
+            self.accounts.authority = AccountMeta::new_readonly(accounts.authority, true);
+
+            self.accounts.skr_rates = AccountMeta::new(accounts.skr_rates, false);
+
+            self
+        }
+
+        pub fn remaining_accounts(mut self, accounts: Vec<AccountMeta>) -> Self {
+            self.remaining_accounts = accounts;
+            self
+        }
+
+        fn to_account_metas(&self) -> Vec<AccountMeta> {
+            let mut metas = Vec::new();
+
+            metas.push(self.accounts.authority.clone());
+
+            metas.push(self.accounts.skr_rates.clone());
 
             metas.extend(self.remaining_accounts.clone());
             metas
@@ -3249,72 +3361,6 @@ impl PolicyUpdated {
     }
 }
 
-/// Custom struct: PriceFeed
-#[derive(Debug, BorshDeserialize, BorshSerialize, Clone)]
-pub struct PriceFeed {
-    pub mint: Pubkey,
-
-    pub feed_id: [u8; 32],
-
-    pub price_account: Pubkey,
-
-    pub max_age_secs: u32,
-
-    pub bump: u8,
-}
-
-impl PriceFeed {
-    pub fn new(
-        mint: Pubkey,
-
-        feed_id: [u8; 32],
-
-        price_account: Pubkey,
-
-        max_age_secs: u32,
-
-        bump: u8,
-    ) -> Self {
-        Self {
-            mint,
-
-            feed_id,
-
-            price_account,
-
-            max_age_secs,
-
-            bump,
-        }
-    }
-}
-
-/// Custom struct: PriceFeedSet
-#[derive(Debug, BorshDeserialize, BorshSerialize, Clone)]
-pub struct PriceFeedSet {
-    pub mint: Pubkey,
-
-    pub feed_id: [u8; 32],
-
-    pub price_account: Pubkey,
-
-    pub max_age_secs: u32,
-}
-
-impl PriceFeedSet {
-    pub fn new(mint: Pubkey, feed_id: [u8; 32], price_account: Pubkey, max_age_secs: u32) -> Self {
-        Self {
-            mint,
-
-            feed_id,
-
-            price_account,
-
-            max_age_secs,
-        }
-    }
-}
-
 /// Custom struct: Pulsed
 #[derive(Debug, BorshDeserialize, BorshSerialize, Clone)]
 pub struct Pulsed {
@@ -3585,6 +3631,110 @@ impl SkrFeePaid {
             fee,
 
             burned,
+        }
+    }
+}
+
+/// Custom struct: SkrRates
+#[derive(Debug, BorshDeserialize, BorshSerialize, Clone)]
+pub struct SkrRates {
+    pub authority: Pubkey,
+
+    pub usdc_mint: Pubkey,
+
+    pub skr_per_sol: u64,
+
+    pub skr_per_usdc: u64,
+
+    pub updated_at: i64,
+
+    pub ref_skr_per_sol: u64,
+
+    pub ref_skr_per_usdc: u64,
+
+    pub ref_at: i64,
+
+    pub bump: u8,
+}
+
+impl SkrRates {
+    pub fn new(
+        authority: Pubkey,
+
+        usdc_mint: Pubkey,
+
+        skr_per_sol: u64,
+
+        skr_per_usdc: u64,
+
+        updated_at: i64,
+
+        ref_skr_per_sol: u64,
+
+        ref_skr_per_usdc: u64,
+
+        ref_at: i64,
+
+        bump: u8,
+    ) -> Self {
+        Self {
+            authority,
+
+            usdc_mint,
+
+            skr_per_sol,
+
+            skr_per_usdc,
+
+            updated_at,
+
+            ref_skr_per_sol,
+
+            ref_skr_per_usdc,
+
+            ref_at,
+
+            bump,
+        }
+    }
+}
+
+/// Custom struct: SkrRatesSet
+#[derive(Debug, BorshDeserialize, BorshSerialize, Clone)]
+pub struct SkrRatesSet {
+    pub by: Pubkey,
+
+    pub authority: Pubkey,
+
+    pub usdc_mint: Pubkey,
+
+    pub skr_per_sol: u64,
+
+    pub skr_per_usdc: u64,
+}
+
+impl SkrRatesSet {
+    pub fn new(
+        by: Pubkey,
+
+        authority: Pubkey,
+
+        usdc_mint: Pubkey,
+
+        skr_per_sol: u64,
+
+        skr_per_usdc: u64,
+    ) -> Self {
+        Self {
+            by,
+
+            authority,
+
+            usdc_mint,
+
+            skr_per_sol,
+
+            skr_per_usdc,
         }
     }
 }

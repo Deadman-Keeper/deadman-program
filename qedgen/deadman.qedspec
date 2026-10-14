@@ -41,7 +41,7 @@
 
 spec Deadman
 
-program_id "ACHVLMoLDM3YPpGbNST4cZW4Tf2jx6nzJGuusyLJHofL"
+program_id "BonEyRsg5PJLwLyceeRAu2QwgduaHcqvPHoerz9uZwK"
 
 const MAX_RULES = 8
 /// Index of the one tier / schedule the create handlers model.

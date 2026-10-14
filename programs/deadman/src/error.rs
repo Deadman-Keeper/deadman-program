@@ -69,10 +69,12 @@ pub enum DeadmanError {
     UnsupportedMint,
     #[msg("This payout charges a fee, so the treasury's token account is required")]
     TreasuryAccountRequired,
-    #[msg("This plan has an SKR fee reserve: pass the price feeds and SKR accounts")]
+    #[msg("This plan has an SKR fee reserve: pass the SKR rates and SKR accounts")]
     SkrFeeAccountsRequired,
-    #[msg("A price feed or SKR fee account does not match the registry, plan or config")]
+    #[msg("The SKR rates or an SKR fee account does not match the plan or config")]
     InvalidSkrFeeAccounts,
     #[msg("Withdraw the SKR fee reserve first")]
     FeeReserveNotEmpty,
+    #[msg("An SKR rate may move at most 20% a day from its reference")]
+    RateChangeTooLarge,
 }

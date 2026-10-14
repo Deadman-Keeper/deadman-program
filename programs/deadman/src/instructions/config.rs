@@ -3,8 +3,8 @@ use anchor_lang::{prelude::*, system_program};
 use crate::{
     constants::*,
     error::DeadmanError,
-    events::{AdminChanged, AdminProposed, PriceFeedSet},
-    state::{Config, ConfigV1, PriceFeed},
+    events::{AdminChanged, AdminProposed, SkrRatesSet},
+    state::{Config, ConfigV1, SkrRates},
 };
 
 /// The treasury must be able to receive lamports as a writable account:
@@ -228,8 +228,7 @@ pub fn handle_accept_admin(ctx: Context<AcceptAdmin>) -> Result<()> {
 }
 
 #[derive(Accounts)]
-#[instruction(mint: Pubkey)]
-pub struct SetPriceFeed<'info> {
+pub struct SetSkrRates<'info> {
     #[account(mut)]
     pub admin: Signer<'info>,
     #[account(
@@ -241,43 +240,75 @@ pub struct SetPriceFeed<'info> {
     #[account(
         init_if_needed,
         payer = admin,
-        space = PriceFeed::SPACE,
-        seeds = [PRICE_FEED_SEED, mint.as_ref()],
+        space = SkrRates::SPACE,
+        seeds = [SKR_RATES_SEED],
         bump
     )]
-    pub price_feed: Account<'info, PriceFeed>,
+    pub skr_rates: Account<'info, SkrRates>,
     pub system_program: Program<'info, System>,
 }
 
-/// Registers or updates the Pyth feed that prices `mint` (SOL: the wrapped
-/// SOL mint) for SKR fee payments. The price account is the push oracle's
-/// `shard_id` account of `feed_id`, so payouts only ever read a canonical,
-/// continuously updated account. `max_age_secs` 0 disables the feed.
-pub fn handle_set_price_feed(
-    ctx: Context<SetPriceFeed>,
-    mint: Pubkey,
-    feed_id: [u8; 32],
-    shard_id: u16,
-    max_age_secs: u32,
+/// Creates or overwrites the SKR rates: the rate authority, the USDC mint
+/// and both rates, unbounded. The rates become the authority's new
+/// reference. A rate of 0 disables paying that asset's fee in SKR.
+pub fn handle_set_skr_rates(
+    ctx: Context<SetSkrRates>,
+    authority: Pubkey,
+    usdc_mint: Pubkey,
+    skr_per_sol: u64,
+    skr_per_usdc: u64,
 ) -> Result<()> {
-    require!(
-        mint != Pubkey::default() && max_age_secs <= MAX_PRICE_AGE_SECS,
-        DeadmanError::InvalidConfig
-    );
-    let (price_account, _) =
-        Pubkey::find_program_address(&[&shard_id.to_le_bytes(), &feed_id], &PYTH_PUSH_ORACLE_ID);
-    ctx.accounts.price_feed.set_inner(PriceFeed {
-        mint,
-        feed_id,
-        price_account,
-        max_age_secs,
-        bump: ctx.bumps.price_feed,
+    require!(authority != Pubkey::default(), DeadmanError::InvalidConfig);
+    let now = Clock::get()?.unix_timestamp;
+    ctx.accounts.skr_rates.set_inner(SkrRates {
+        authority,
+        usdc_mint,
+        skr_per_sol,
+        skr_per_usdc,
+        updated_at: now,
+        ref_skr_per_sol: skr_per_sol,
+        ref_skr_per_usdc: skr_per_usdc,
+        ref_at: now,
+        bump: ctx.bumps.skr_rates,
     });
-    emit!(PriceFeedSet {
-        mint,
-        feed_id,
-        price_account,
-        max_age_secs,
+    emit!(SkrRatesSet {
+        by: ctx.accounts.admin.key(),
+        authority,
+        usdc_mint,
+        skr_per_sol,
+        skr_per_usdc,
+    });
+    Ok(())
+}
+
+#[derive(Accounts)]
+pub struct UpdateSkrRates<'info> {
+    pub authority: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [SKR_RATES_SEED],
+        bump = skr_rates.bump,
+        has_one = authority @ DeadmanError::Unauthorized
+    )]
+    pub skr_rates: Account<'info, SkrRates>,
+}
+
+/// The rate authority refreshes both rates, each at most 20% from its
+/// daily reference (see [`SkrRates::bounded_update`]).
+pub fn handle_update_skr_rates(
+    ctx: Context<UpdateSkrRates>,
+    skr_per_sol: u64,
+    skr_per_usdc: u64,
+) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
+    let rates = &mut ctx.accounts.skr_rates;
+    rates.bounded_update(skr_per_sol, skr_per_usdc, now)?;
+    emit!(SkrRatesSet {
+        by: rates.authority,
+        authority: rates.authority,
+        usdc_mint: rates.usdc_mint,
+        skr_per_sol,
+        skr_per_usdc,
     });
     Ok(())
 }

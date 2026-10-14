@@ -1,5 +1,5 @@
-//! Release fees paid in SKR from a plan's fee reserve, priced by Pyth
-//! `PriceUpdateV2` accounts built by hand at their canonical addresses.
+//! Release fees paid in SKR from a plan's fee reserve, converted at the
+//! operator-set SKR rates of SOL and USDC.
 
 use {
     anchor_lang::{
@@ -13,8 +13,7 @@ use {
     },
     anchor_spl::associated_token::get_associated_token_address_with_program_id,
     deadman::{
-        AmountMode, PriceFeed, Rail, RuleInput, Vault, VestingInput, CONFIG_SEED, NATIVE_MINT,
-        PRICE_FEED_SEED, PRICE_UPDATE_V2_DISCRIMINATOR, PYTH_PUSH_ORACLE_ID, PYTH_RECEIVER_ID,
+        AmountMode, Rail, RuleInput, SkrRates, Vault, VestingInput, CONFIG_SEED, SKR_RATES_SEED,
         VAULT_SEED,
     },
     litesvm::LiteSVM,
@@ -32,31 +31,14 @@ use {
 const SOL: u64 = 1_000_000_000;
 const SKR: u64 = 1_000_000;
 const DAY: i64 = 86_400;
-const MAX_AGE: u32 = 120;
 
-const SOL_FEED: &str = "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
-const USDC_FEED: &str = "eaa020c61cc479712813461ce153894a96a6c00b21ed0cfc2798d1f9a9e9c94a";
-const SKR_FEED: &str = "38846ec4d0dbe808091817f5c0d6ab8058e25422348ddf97db52b6c378a93bf9";
+/// SOL at $150, USDC at $1 and SKR at $0.02: SKR base units per whole SOL
+/// and per whole USDC.
+const SKR_PER_SOL: u64 = 7_500 * SKR;
+const SKR_PER_USDC: u64 = 50 * SKR;
 
-/// $150, $1 and $0.02, all with exponent -8.
-const SOL_PRICE: i64 = 15_000_000_000;
-const USDC_PRICE: i64 = 100_000_000;
-const SKR_PRICE: i64 = 2_000_000;
-
-fn feed_id(hex: &str) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    for (i, b) in out.iter_mut().enumerate() {
-        *b = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap();
-    }
-    out
-}
-
-fn canonical(feed: &[u8; 32]) -> Pubkey {
-    Pubkey::find_program_address(&[&0u16.to_le_bytes(), feed], &PYTH_PUSH_ORACLE_ID).0
-}
-
-fn price_feed_pda(mint: &Pubkey) -> Pubkey {
-    Pubkey::find_program_address(&[PRICE_FEED_SEED, mint.as_ref()], &deadman::id()).0
+fn rates_pda() -> Pubkey {
+    Pubkey::find_program_address(&[SKR_RATES_SEED], &deadman::id()).0
 }
 
 fn config_pda() -> Pubkey {
@@ -67,34 +49,12 @@ fn ata(owner: &Pubkey, mint: &Pubkey) -> Pubkey {
     get_associated_token_address_with_program_id(owner, mint, &TOKEN_ID)
 }
 
-/// A `PriceUpdateV2` account body (134 bytes, like the receiver allocates).
-fn price_update(feed: &[u8; 32], price: i64, conf: u64, publish_time: i64, full: bool) -> Vec<u8> {
-    let mut d = PRICE_UPDATE_V2_DISCRIMINATOR.to_vec();
-    d.extend_from_slice(&[9u8; 32]);
-    if full {
-        d.push(1);
-    } else {
-        d.extend_from_slice(&[0, 3]);
-    }
-    d.extend_from_slice(feed);
-    d.extend_from_slice(&price.to_le_bytes());
-    d.extend_from_slice(&conf.to_le_bytes());
-    d.extend_from_slice(&(-8i32).to_le_bytes());
-    d.extend_from_slice(&publish_time.to_le_bytes());
-    d.extend_from_slice(&(publish_time - 1).to_le_bytes());
-    d.extend_from_slice(&price.to_le_bytes());
-    d.extend_from_slice(&conf.to_le_bytes());
-    d.extend_from_slice(&7u64.to_le_bytes());
-    d.resize(134, 0);
-    d
-}
-
-/// Independent model of the SKR fee: `bps` of the payout's USD value in
-/// SKR base units, rounded up. All prices use exponent -8.
-fn model_fee(gross: u64, asset_price: i64, asset_decimals: u32, bps: u64) -> u64 {
-    let skr_decimals = 6u32;
-    let num = u128::from(gross) * asset_price as u128 * u128::from(bps) * 10u128.pow(skr_decimals);
-    let den = 10_000u128 * SKR_PRICE as u128 * 10u128.pow(asset_decimals);
+/// Independent model of the SKR fee: `bps` of `gross` base units of an
+/// asset with `asset_decimals`, at `rate` SKR base units per whole unit,
+/// rounded up.
+fn model_fee(gross: u64, rate: u64, asset_decimals: u32, bps: u64) -> u64 {
+    let num = u128::from(gross) * u128::from(rate) * u128::from(bps);
+    let den = 10_000u128 * 10u128.pow(asset_decimals);
     u64::try_from(num.div_ceil(den)).unwrap()
 }
 
@@ -120,22 +80,32 @@ struct Env {
     owner: Keypair,
     guard: Keypair,
     keeper: Keypair,
+    rater: Keypair,
     skr: Pubkey,
     plan: u16,
 }
 
 impl Env {
-    /// Config with an SKR mint, SOL and SKR feeds registered with fresh
-    /// prices, and the treasury's SKR ATA created.
+    /// Config with an SKR mint and SOL's SKR rate set (no USDC mint yet),
+    /// and the treasury's SKR ATA created.
     fn new() -> Self {
+        let mut env = Self::without_rates();
+        env.set_rates(&Pubkey::default(), SKR_PER_SOL, SKR_PER_USDC)
+            .unwrap();
+        env
+    }
+
+    /// Like [`Env::new`] before the admin has set any SKR rate.
+    fn without_rates() -> Self {
         let mut svm = LiteSVM::new();
         let bytes = include_bytes!(concat!(
             env!("CARGO_TARGET_TMPDIR"),
             "/../deploy/deadman.so"
         ));
         svm.add_program(deadman::id(), bytes).unwrap();
-        let [admin, treasury, owner, guard, keeper] = std::array::from_fn(|_| Keypair::new());
-        for k in [&admin, &treasury, &owner, &guard, &keeper] {
+        let [admin, treasury, owner, guard, keeper, rater] =
+            std::array::from_fn(|_| Keypair::new());
+        for k in [&admin, &treasury, &owner, &guard, &keeper, &rater] {
             svm.airdrop(&k.pubkey(), 100 * SOL).unwrap();
         }
         let pd = Pubkey::find_program_address(
@@ -158,6 +128,7 @@ impl Env {
             owner,
             guard,
             keeper,
+            rater,
             skr,
             plan: 0,
         };
@@ -178,10 +149,6 @@ impl Env {
             .to_account_metas(None),
         );
         env.send(ix, &[&admin]).unwrap();
-        env.set_feed(&NATIVE_MINT, SOL_FEED, MAX_AGE).unwrap();
-        env.set_feed(&skr, SKR_FEED, MAX_AGE).unwrap();
-        env.post(SOL_FEED, SOL_PRICE, 0, true);
-        env.post(SKR_FEED, SKR_PRICE, 0, true);
         let t = env.treasury.pubkey();
         env.create_ata(&t, &skr);
         env
@@ -284,35 +251,79 @@ impl Env {
         mint
     }
 
-    fn set_feed_ix(&self, signer: &Pubkey, mint: &Pubkey, feed: &str, max_age: u32) -> Instruction {
+    fn set_rates_ix(
+        &self,
+        signer: &Pubkey,
+        usdc: &Pubkey,
+        skr_per_sol: u64,
+        skr_per_usdc: u64,
+    ) -> Instruction {
         Instruction::new_with_bytes(
             deadman::id(),
-            &deadman::instruction::SetPriceFeed {
-                mint: *mint,
-                feed_id: feed_id(feed),
-                shard_id: 0,
-                max_age_secs: max_age,
+            &deadman::instruction::SetSkrRates {
+                authority: self.rater.pubkey(),
+                usdc_mint: *usdc,
+                skr_per_sol,
+                skr_per_usdc,
             }
             .data(),
-            deadman::accounts::SetPriceFeed {
+            deadman::accounts::SetSkrRates {
                 admin: *signer,
                 config: config_pda(),
-                price_feed: price_feed_pda(mint),
+                skr_rates: rates_pda(),
                 system_program: system_program::ID,
             }
             .to_account_metas(None),
         )
     }
 
-    fn set_feed(&mut self, mint: &Pubkey, feed: &str, max_age: u32) -> Result<u64, String> {
+    fn set_rates(
+        &mut self,
+        usdc: &Pubkey,
+        skr_per_sol: u64,
+        skr_per_usdc: u64,
+    ) -> Result<u64, String> {
         let admin = self.admin.insecure_clone();
-        let ix = self.set_feed_ix(&admin.pubkey(), mint, feed, max_age);
+        let ix = self.set_rates_ix(&admin.pubkey(), usdc, skr_per_sol, skr_per_usdc);
         self.send(ix, &[&admin])
     }
 
-    fn price_feed(&self, mint: &Pubkey) -> PriceFeed {
-        let acc = self.svm.get_account(&price_feed_pda(mint)).unwrap();
-        PriceFeed::try_deserialize(&mut acc.data.as_slice()).unwrap()
+    fn update_rates_as(
+        &mut self,
+        signer: &Keypair,
+        skr_per_sol: u64,
+        skr_per_usdc: u64,
+    ) -> Result<u64, String> {
+        let ix = Instruction::new_with_bytes(
+            deadman::id(),
+            &deadman::instruction::UpdateSkrRates {
+                skr_per_sol,
+                skr_per_usdc,
+            }
+            .data(),
+            deadman::accounts::UpdateSkrRates {
+                authority: signer.pubkey(),
+                skr_rates: rates_pda(),
+            }
+            .to_account_metas(None),
+        );
+        self.send(ix, &[signer])
+    }
+
+    fn update_rates(&mut self, skr_per_sol: u64, skr_per_usdc: u64) -> Result<u64, String> {
+        let rater = self.rater.insecure_clone();
+        self.update_rates_as(&rater, skr_per_sol, skr_per_usdc)
+    }
+
+    /// The rate script's refresh: the current rates again, now.
+    fn refresh_rates(&mut self) {
+        let r = self.rates();
+        self.update_rates(r.skr_per_sol, r.skr_per_usdc).unwrap();
+    }
+
+    fn rates(&self) -> SkrRates {
+        let acc = self.svm.get_account(&rates_pda()).unwrap();
+        SkrRates::try_deserialize(&mut acc.data.as_slice()).unwrap()
     }
 
     fn put(&mut self, address: &Pubkey, data: Vec<u8>, owner: Pubkey) {
@@ -321,34 +332,6 @@ impl Env {
         acc.data = data;
         acc.owner = owner;
         self.svm.set_account(*address, acc).unwrap();
-    }
-
-    /// Posts a price `age` seconds old to the feed's canonical account.
-    fn post(&mut self, feed: &str, price: i64, age: i64, full: bool) {
-        self.post_with(
-            feed,
-            feed,
-            price,
-            price as u64 / 1_000,
-            age,
-            full,
-            PYTH_RECEIVER_ID,
-        );
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn post_with(
-        &mut self,
-        at_feed: &str,
-        feed: &str,
-        price: i64,
-        conf: u64,
-        age: i64,
-        full: bool,
-        owner: Pubkey,
-    ) {
-        let data = price_update(&feed_id(feed), price, conf, self.now() - age, full);
-        self.put(&canonical(&feed_id(at_feed)), data, owner);
     }
 
     fn create_plan(&mut self, rules: Vec<RuleInput>) -> Result<u64, String> {
@@ -507,19 +490,11 @@ impl Env {
         self.send(ix, &[&owner])
     }
 
-    /// The SKR fee accounts for a payout of `asset` (SOL: the native mint).
-    fn skr_accounts(&self, asset: &Pubkey) -> Vec<AccountMeta> {
-        let asset_feed = price_feed_pda(asset);
-        let asset_price = self
-            .svm
-            .get_account(&asset_feed)
-            .map(|_| self.price_feed(asset).price_account)
-            .unwrap_or_default();
+    /// The SKR fee accounts the program requires for every payout of a plan
+    /// with a reserve.
+    fn skr_accounts(&self) -> Vec<AccountMeta> {
         vec![
-            AccountMeta::new_readonly(asset_feed, false),
-            AccountMeta::new_readonly(asset_price, false),
-            AccountMeta::new_readonly(price_feed_pda(&self.skr), false),
-            AccountMeta::new_readonly(self.price_feed(&self.skr).price_account, false),
+            AccountMeta::new_readonly(rates_pda(), false),
             AccountMeta::new(ata(&self.vault_addr(), &self.skr), false),
             AccountMeta::new(self.skr, false),
             AccountMeta::new(ata(&self.treasury.pubkey(), &self.skr), false),
@@ -618,7 +593,7 @@ impl Env {
 }
 
 /// A plan paying all its SOL to a fresh beneficiary, `sol` deposited and
-/// `reserve` SKR in the fee reserve, with the tier due.
+/// `reserve` SKR in the fee reserve, with the tier due and the rates fresh.
 fn sol_plan(sol: u64, reserve: u64) -> (Env, Pubkey) {
     let mut env = Env::new();
     let b = Keypair::new().pubkey();
@@ -628,8 +603,7 @@ fn sol_plan(sol: u64, reserve: u64) -> (Env, Pubkey) {
         env.fund(reserve).unwrap();
     }
     env.advance(10 * DAY + 1);
-    env.post(SOL_FEED, SOL_PRICE, 0, true);
-    env.post(SKR_FEED, SKR_PRICE, 0, true);
+    env.refresh_rates();
     (env, b)
 }
 
@@ -643,43 +617,116 @@ fn assert_sol_fallback(env: &Env, b: &Pubkey, gross: u64, reserve: u64, treasury
     assert_eq!(env.treasury_skr(), 0);
 }
 
-#[test]
-fn set_price_feed_is_admin_only_capped_and_derives_the_canonical_account() {
+/// A plan with a USDC tier and `reserve` SKR, the tier due, USDC registered
+/// and the rates fresh. Returns the beneficiary and the USDC mint.
+fn usdc_plan(usdc_in_vault: u64, reserve: u64) -> (Env, Pubkey, Pubkey) {
     let mut env = Env::new();
-    // The derivation matches the live shard-0 accounts.
-    assert_eq!(
-        env.price_feed(&NATIVE_MINT).price_account,
-        Pubkey::from_str_const("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE")
-    );
-    assert_eq!(
-        env.price_feed(&env.skr).price_account,
-        Pubkey::from_str_const("AFrJWhfWt3vDtGPdcwTyLyHz8ZQ4M9L2z1YHThY5Vbj5")
-    );
-    let usdc = Pubkey::new_unique();
-    env.set_feed(&usdc, USDC_FEED, 60).unwrap();
-    let f = env.price_feed(&usdc);
-    assert_eq!(
-        f.price_account,
-        Pubkey::from_str_const("Dpw1EAVrSB1ibxiDQyTAW6Zip3J4Btk2x4SgApQCeFbX")
-    );
-    assert_eq!(
-        (f.mint, f.feed_id, f.max_age_secs),
-        (usdc, feed_id(USDC_FEED), 60)
-    );
+    let b = Keypair::new().pubkey();
+    env.create_plan(all_sol(&Keypair::new().pubkey())).unwrap();
+    let usdc = env.token(usdc_in_vault);
+    env.update_plan(vec![tier(&b, Some(usdc), AmountMode::Percent, 10_000)])
+        .unwrap();
+    env.set_rates(&usdc, SKR_PER_SOL, SKR_PER_USDC).unwrap();
+    env.fund(reserve).unwrap();
+    env.advance(10 * DAY + 1);
+    env.refresh_rates();
+    (env, b, usdc)
+}
 
-    // Updating in place, and disabling with 0.
-    env.set_feed(&usdc, USDC_FEED, 0).unwrap();
-    assert_eq!(env.price_feed(&usdc).max_age_secs, 0);
+#[test]
+fn set_skr_rates_is_admin_only_and_resets_the_reference() {
+    let mut env = Env::new();
+    let usdc = Pubkey::new_unique();
+    env.advance(DAY);
+    env.set_rates(&usdc, 9 * SKR, 11 * SKR).unwrap();
+    let r = env.rates();
+    assert_eq!(
+        (r.authority, r.usdc_mint, r.skr_per_sol, r.skr_per_usdc),
+        (env.rater.pubkey(), usdc, 9 * SKR, 11 * SKR)
+    );
+    assert_eq!((r.ref_skr_per_sol, r.ref_skr_per_usdc), (9 * SKR, 11 * SKR));
+    assert_eq!((r.updated_at, r.ref_at), (env.now(), env.now()));
+
+    // The admin is unbounded: a 100x move and disabling both are fine.
+    env.set_rates(&usdc, 900 * SKR, 0).unwrap();
+    assert_eq!(env.rates().skr_per_sol, 900 * SKR);
 
     let intruder = Keypair::new();
     env.svm.airdrop(&intruder.pubkey(), SOL).unwrap();
-    let ix = env.set_feed_ix(&intruder.pubkey(), &usdc, USDC_FEED, 60);
+    let ix = env.set_rates_ix(&intruder.pubkey(), &usdc, 1, 1);
     let err = env.send(ix, &[&intruder]).unwrap_err();
     assert!(err.contains("Unauthorized"), "{err}");
-    let err = env.set_feed(&usdc, USDC_FEED, 3_601).unwrap_err();
+    // The rate authority cannot use the admin's instruction either.
+    let rater = env.rater.insecure_clone();
+    let ix = env.set_rates_ix(&rater.pubkey(), &usdc, 1, 1);
+    let err = env.send(ix, &[&rater]).unwrap_err();
+    assert!(err.contains("Unauthorized"), "{err}");
+
+    // A rate authority is required.
+    let admin = env.admin.insecure_clone();
+    let mut ix = env.set_rates_ix(&admin.pubkey(), &usdc, 1, 1);
+    ix.data = deadman::instruction::SetSkrRates {
+        authority: Pubkey::default(),
+        usdc_mint: usdc,
+        skr_per_sol: 1,
+        skr_per_usdc: 1,
+    }
+    .data();
+    let err = env.send(ix, &[&admin]).unwrap_err();
     assert!(err.contains("InvalidConfig"), "{err}");
-    let err = env.set_feed(&Pubkey::default(), USDC_FEED, 60).unwrap_err();
-    assert!(err.contains("InvalidConfig"), "{err}");
+}
+
+#[test]
+fn the_rate_authority_moves_rates_at_most_twenty_percent_a_day() {
+    let mut env = Env::new();
+    let (sol, usdc) = (SKR_PER_SOL, SKR_PER_USDC);
+
+    // Exactly ±20% of the reference, on either rate, is allowed...
+    env.update_rates(sol * 12 / 10, usdc * 8 / 10).unwrap();
+    env.update_rates(sol * 8 / 10, usdc * 12 / 10).unwrap();
+    // ...one base unit further is not, and neither is stepping from the
+    // last value instead of the day's reference.
+    for (s, u) in [
+        (sol * 12 / 10 + 1, usdc),
+        (sol, usdc * 8 / 10 - 1),
+        (sol * 8 / 10 - 1, usdc),
+    ] {
+        let err = env.update_rates(s, u).unwrap_err();
+        assert!(err.contains("RateChangeTooLarge"), "{s} {u}: {err}");
+    }
+    env.update_rates(sol * 12 / 10, usdc).unwrap();
+    let err = env.update_rates(sol * 144 / 100, usdc).unwrap_err();
+    assert!(err.contains("RateChangeTooLarge"), "{err}");
+    let r = env.rates();
+    assert_eq!((r.skr_per_sol, r.updated_at), (sol * 12 / 10, env.now()));
+    assert_eq!(r.ref_skr_per_sol, sol);
+
+    // A day later the reference rolls forward to the current rates.
+    env.advance(DAY);
+    env.update_rates(sol * 144 / 100, usdc).unwrap();
+    let r = env.rates();
+    assert_eq!((r.ref_skr_per_sol, r.ref_at), (sol * 12 / 10, env.now()));
+
+    // Only the rate authority may update; the admin uses set_skr_rates.
+    let admin = env.admin.insecure_clone();
+    let err = env.update_rates_as(&admin, sol, usdc).unwrap_err();
+    assert!(err.contains("Unauthorized"), "{err}");
+}
+
+#[test]
+fn a_rate_disabled_across_a_window_needs_the_admin_to_come_back() {
+    let mut env = Env::new();
+    // Disabling is always allowed, and re-enabling within the same window.
+    env.update_rates(0, SKR_PER_USDC).unwrap();
+    env.update_rates(SKR_PER_SOL, SKR_PER_USDC).unwrap();
+    env.update_rates(0, SKR_PER_USDC).unwrap();
+    env.advance(DAY);
+    // The reference is now 0, so the authority cannot enable it again.
+    let err = env.update_rates(SKR_PER_SOL, SKR_PER_USDC).unwrap_err();
+    assert!(err.contains("RateChangeTooLarge"), "{err}");
+    env.set_rates(&Pubkey::default(), SKR_PER_SOL, SKR_PER_USDC)
+        .unwrap();
+    env.update_rates(SKR_PER_SOL, SKR_PER_USDC).unwrap();
 }
 
 #[test]
@@ -688,12 +735,12 @@ fn sol_payout_pays_the_fee_in_skr_and_burns_ten_percent() {
     let gross = env.withdrawable();
     let treasury_sol = env.lamports(&env.treasury.pubkey());
     let supply = env.supply(&env.skr);
-    let extra = env.skr_accounts(&NATIVE_MINT);
+    let extra = env.skr_accounts();
     let cu = env.execute_sol(&b, extra).unwrap();
     println!("execute_sol_rule with SKR fee: {cu} CU");
 
     // $1,500 payout: 1.5% = $22.50 = 1,125 SKR at $0.02.
-    let fee = model_fee(gross, SOL_PRICE, 9, 150);
+    let fee = model_fee(gross, SKR_PER_SOL, 9, 150);
     assert_eq!(fee, 1_125 * SKR);
     let burned = fee / 10;
     assert_eq!(env.lamports(&b), gross, "beneficiary gets 100%");
@@ -710,25 +757,14 @@ fn sol_payout_pays_the_fee_in_skr_and_burns_ten_percent() {
 }
 
 #[test]
-fn token_payout_pays_the_fee_in_skr() {
-    let mut env = Env::new();
-    let b = Keypair::new().pubkey();
-    env.create_plan(all_sol(&Keypair::new().pubkey())).unwrap();
-    let usdc = env.token(1_000 * SKR);
-    env.update_plan(vec![tier(&b, Some(usdc), AmountMode::Percent, 10_000)])
-        .unwrap();
-    env.set_feed(&usdc, USDC_FEED, MAX_AGE).unwrap();
-    env.fund(1_000 * SKR).unwrap();
-    env.advance(10 * DAY + 1);
-    for (f, p) in [(SKR_FEED, SKR_PRICE), (USDC_FEED, USDC_PRICE)] {
-        env.post(f, p, 30, true);
-    }
-    let extra = env.skr_accounts(&usdc);
+fn usdc_payout_pays_the_fee_in_skr() {
+    let (mut env, b, usdc) = usdc_plan(1_000 * SKR, 1_000 * SKR);
+    let extra = env.skr_accounts();
     let cu = env.execute_token(0, &b, &usdc, extra).unwrap();
     println!("execute_token_rule with SKR fee: {cu} CU");
 
     // $1,000 payout: $15 = 750 SKR.
-    let fee = model_fee(1_000 * SKR, USDC_PRICE, 6, 150);
+    let fee = model_fee(1_000 * SKR, SKR_PER_USDC, 6, 150);
     assert_eq!(fee, 750 * SKR);
     assert_eq!(env.balance(&ata(&b, &usdc)), 1_000 * SKR);
     assert_eq!(env.balance(&ata(&env.treasury.pubkey(), &usdc)), 0);
@@ -742,55 +778,23 @@ fn the_fee_rounds_up_in_the_protocol_favour() {
     let (mut env, b) = sol_plan(SOL + 7, 200 * SKR);
     let gross = env.withdrawable();
     assert_eq!(gross, SOL + 7);
-    let extra = env.skr_accounts(&NATIVE_MINT);
+    let extra = env.skr_accounts();
     env.execute_sol(&b, extra).unwrap();
     let fee = 200 * SKR - env.vault().skr_fee_reserve;
     assert_eq!(fee, 112_500_001);
-    assert_eq!(fee, model_fee(gross, SOL_PRICE, 9, 150));
+    assert_eq!(fee, model_fee(gross, SKR_PER_SOL, 9, 150));
 }
 
 #[test]
-fn unusable_prices_fall_back_to_the_asset_fee() {
+fn unusable_rates_fall_back_to_the_asset_fee() {
     type Spoil = fn(&mut Env);
-    let cases: [(&str, Spoil); 8] = [
-        ("stale SOL", |e| {
-            e.post(SOL_FEED, SOL_PRICE, i64::from(MAX_AGE) + 1, true)
+    let cases: [(&str, Spoil); 3] = [
+        ("older than a day", |e| e.advance(DAY + 1)),
+        ("SOL disabled", |e| {
+            e.update_rates(0, SKR_PER_USDC).unwrap();
         }),
-        ("stale SKR", |e| {
-            e.post(SKR_FEED, SKR_PRICE, i64::from(MAX_AGE) + 1, true)
-        }),
-        ("partial", |e| e.post(SOL_FEED, SOL_PRICE, 0, false)),
-        ("wrong feed id", |e| {
-            e.post_with(SOL_FEED, USDC_FEED, SOL_PRICE, 0, 0, true, PYTH_RECEIVER_ID)
-        }),
-        ("wrong owner", |e| {
-            e.post_with(
-                SOL_FEED,
-                SOL_FEED,
-                SOL_PRICE,
-                0,
-                0,
-                true,
-                system_program::ID,
-            )
-        }),
-        ("wide confidence", |e| {
-            let conf = SOL_PRICE as u64 / 50 + 1;
-            e.post_with(
-                SOL_FEED,
-                SOL_FEED,
-                SOL_PRICE,
-                conf,
-                0,
-                true,
-                PYTH_RECEIVER_ID,
-            )
-        }),
-        ("negative price", |e| {
-            e.post_with(SKR_FEED, SKR_FEED, -SKR_PRICE, 0, 0, true, PYTH_RECEIVER_ID)
-        }),
-        ("feed disabled", |e| {
-            e.set_feed(&NATIVE_MINT, SOL_FEED, 0).unwrap();
+        ("SOL disabled by the admin", |e| {
+            e.set_rates(&Pubkey::default(), 0, SKR_PER_USDC).unwrap();
         }),
     ];
     for (name, spoil) in cases {
@@ -798,7 +802,7 @@ fn unusable_prices_fall_back_to_the_asset_fee() {
         spoil(&mut env);
         let gross = env.withdrawable();
         let treasury = env.lamports(&env.treasury.pubkey());
-        let extra = env.skr_accounts(&NATIVE_MINT);
+        let extra = env.skr_accounts();
         env.execute_sol(&b, extra)
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_sol_fallback(&env, &b, gross, 10_000 * SKR, treasury);
@@ -806,22 +810,30 @@ fn unusable_prices_fall_back_to_the_asset_fee() {
 }
 
 #[test]
-fn exactly_max_age_and_two_percent_confidence_are_still_usable() {
+fn rates_exactly_a_day_old_are_still_usable() {
     let (mut env, b) = sol_plan(10 * SOL, 10_000 * SKR);
-    env.post_with(
-        SOL_FEED,
-        SOL_FEED,
-        SOL_PRICE,
-        SOL_PRICE as u64 / 50,
-        i64::from(MAX_AGE),
-        true,
-        PYTH_RECEIVER_ID,
-    );
+    env.advance(DAY);
     let gross = env.withdrawable();
-    let extra = env.skr_accounts(&NATIVE_MINT);
+    let extra = env.skr_accounts();
     env.execute_sol(&b, extra).unwrap();
     assert_eq!(env.lamports(&b), gross);
     assert!(env.vault().skr_fee_reserve < 10_000 * SKR);
+}
+
+#[test]
+fn before_any_rate_is_set_the_empty_rates_address_falls_back() {
+    let mut env = Env::without_rates();
+    let b = Keypair::new().pubkey();
+    env.create_plan(all_sol(&b)).unwrap();
+    env.deposit_sol(10 * SOL);
+    env.fund(10_000 * SKR).unwrap();
+    env.advance(10 * DAY + 1);
+    assert!(env.svm.get_account(&rates_pda()).is_none());
+    let gross = env.withdrawable();
+    let treasury = env.lamports(&env.treasury.pubkey());
+    let extra = env.skr_accounts();
+    env.execute_sol(&b, extra).unwrap();
+    assert_sol_fallback(&env, &b, gross, 10_000 * SKR, treasury);
 }
 
 #[test]
@@ -830,7 +842,7 @@ fn a_short_reserve_falls_back_and_keeps_the_reserve() {
     let (mut env, b) = sol_plan(10 * SOL, 1_124 * SKR);
     let gross = env.withdrawable();
     let treasury = env.lamports(&env.treasury.pubkey());
-    let extra = env.skr_accounts(&NATIVE_MINT);
+    let extra = env.skr_accounts();
     env.execute_sol(&b, extra).unwrap();
     assert_sol_fallback(&env, &b, gross, 1_124 * SKR, treasury);
 }
@@ -850,11 +862,10 @@ fn a_missing_treasury_skr_account_falls_back() {
     acc.lamports = 0;
     env.svm.set_account(t_ata, acc).unwrap();
     env.advance(10 * DAY + 1);
-    env.post(SOL_FEED, SOL_PRICE, 0, true);
-    env.post(SKR_FEED, SKR_PRICE, 0, true);
+    env.refresh_rates();
     let gross = env.withdrawable();
     let treasury = env.lamports(&env.treasury.pubkey());
-    let extra = env.skr_accounts(&NATIVE_MINT);
+    let extra = env.skr_accounts();
     env.execute_sol(&b, extra).unwrap();
     let fee = gross * 200 / 10_000;
     assert_eq!(env.lamports(&b), gross - fee);
@@ -865,30 +876,27 @@ fn a_missing_treasury_skr_account_falls_back() {
 #[test]
 fn executors_cannot_substitute_or_omit_the_fee_accounts() {
     let (mut env, b) = sol_plan(10 * SOL, 10_000 * SKR);
-    let good = env.skr_accounts(&NATIVE_MINT);
+    let good = env.skr_accounts();
 
     let err = env.execute_sol(&b, vec![]).unwrap_err();
     assert!(err.contains("SkrFeeAccountsRequired"), "{err}");
-    let err = env.execute_sol(&b, good[..7].to_vec()).unwrap_err();
+    let err = env.execute_sol(&b, good[..4].to_vec()).unwrap_err();
     assert!(err.contains("SkrFeeAccountsRequired"), "{err}");
 
-    // A fresh, valid SOL update at a non-canonical address.
-    let other = Pubkey::new_unique();
-    let data = price_update(&feed_id(SOL_FEED), SOL_PRICE, 0, env.now(), true);
-    env.put(&other, data, PYTH_RECEIVER_ID);
-    let unrelated = Keypair::new().pubkey();
+    // A copy of the real rates (with a cheaper SKR) at another address,
+    // owned by the program.
+    let fake = Pubkey::new_unique();
+    let mut data = env.svm.get_account(&rates_pda()).unwrap().data;
+    data[72..80].copy_from_slice(&1u64.to_le_bytes());
+    env.put(&fake, data, deadman::id());
     let swaps: Vec<(usize, Pubkey)> = vec![
-        (1, other),
-        (3, other),
-        // The SKR feed passed as the SOL feed and the other way round.
-        (0, price_feed_pda(&env.skr)),
-        (2, price_feed_pda(&NATIVE_MINT)),
-        // An address that is neither the feed nor its empty PDA.
-        (0, unrelated),
-        (4, ata(&env.owner.pubkey(), &env.skr)),
-        (5, Pubkey::new_unique()),
-        (6, ata(&env.owner.pubkey(), &env.skr)),
-        (7, system_program::ID),
+        (0, fake),
+        // An address that is neither the rates account nor its PDA.
+        (0, Keypair::new().pubkey()),
+        (1, ata(&env.owner.pubkey(), &env.skr)),
+        (2, Pubkey::new_unique()),
+        (3, ata(&env.owner.pubkey(), &env.skr)),
+        (4, system_program::ID),
     ];
     for (i, key) in swaps {
         let mut extra = good.clone();
@@ -903,18 +911,23 @@ fn executors_cannot_substitute_or_omit_the_fee_accounts() {
 }
 
 #[test]
-fn an_unregistered_asset_needs_its_empty_feed_address_and_falls_back() {
+fn other_tokens_pay_two_percent_in_kind() {
     let mut env = Env::new();
     let b = Keypair::new().pubkey();
     env.create_plan(all_sol(&Keypair::new().pubkey())).unwrap();
     let tok = env.token(1_000 * SKR);
     env.update_plan(vec![tier(&b, Some(tok), AmountMode::Percent, 10_000)])
         .unwrap();
+    // USDC is registered, but this token is not USDC.
+    let usdc = Pubkey::new_unique();
+    env.set_rates(&usdc, SKR_PER_SOL, SKR_PER_USDC).unwrap();
     env.fund(500 * SKR).unwrap();
     env.advance(10 * DAY + 1);
-    env.post(SKR_FEED, SKR_PRICE, 0, true);
-    let extra = env.skr_accounts(&tok);
-    assert_eq!(extra[0].pubkey, price_feed_pda(&tok));
+    env.refresh_rates();
+    // A plan with a reserve still passes the fee accounts on every payout.
+    let err = env.execute_token(0, &b, &tok, vec![]).unwrap_err();
+    assert!(err.contains("SkrFeeAccountsRequired"), "{err}");
+    let extra = env.skr_accounts();
     env.execute_token(0, &b, &tok, extra).unwrap();
     assert_eq!(env.balance(&ata(&b, &tok)), 980 * SKR);
     assert_eq!(env.balance(&ata(&env.treasury.pubkey(), &tok)), 20 * SKR);
@@ -935,7 +948,7 @@ fn skr_payouts_stay_in_kind_and_never_touch_the_reserve() {
     env.mint_to(&skr, &vault_ata, 1_000 * SKR);
     let supply = env.supply(&skr);
     env.advance(10 * DAY + 1);
-    // No price accounts needed: the in-kind 1.5% applies.
+    // No fee accounts needed: the in-kind 1.5% applies.
     env.execute_token(0, &b, &skr, vec![]).unwrap();
     let fee = 1_000 * SKR * 150 / 10_000;
     assert_eq!(env.balance(&ata(&b, &skr)), 1_000 * SKR - fee);
@@ -1189,18 +1202,12 @@ fn vesting_releases_pay_the_fee_in_skr() {
     let vault_usdc = env.create_ata(&v, &usdc);
     env.create_ata(&t, &usdc);
     env.mint_to(&usdc, &vault_usdc, 1_000 * SKR);
-    env.set_feed(&usdc, USDC_FEED, MAX_AGE).unwrap();
+    env.set_rates(&usdc, SKR_PER_SOL, SKR_PER_USDC).unwrap();
     env.fund(10_000 * SKR).unwrap();
     env.advance(50 * DAY);
-    for (f, p) in [
-        (SOL_FEED, SOL_PRICE),
-        (SKR_FEED, SKR_PRICE),
-        (USDC_FEED, USDC_PRICE),
-    ] {
-        env.post(f, p, 0, true);
-    }
+    env.refresh_rates();
 
-    let extra = env.skr_accounts(&NATIVE_MINT);
+    let extra = env.skr_accounts();
     let ix = env.sol_ix(
         deadman::instruction::ReleaseVestedSol { index: 0 },
         &b,
@@ -1208,10 +1215,10 @@ fn vesting_releases_pay_the_fee_in_skr() {
     );
     env.run(ix).unwrap();
     assert_eq!(env.lamports(&b), 5 * SOL);
-    let sol_fee = model_fee(5 * SOL, SOL_PRICE, 9, 150);
+    let sol_fee = model_fee(5 * SOL, SKR_PER_SOL, 9, 150);
     assert_eq!(env.vault().skr_fee_reserve, 10_000 * SKR - sol_fee);
 
-    let extra = env.skr_accounts(&usdc);
+    let extra = env.skr_accounts();
     let ix = env.token_ix(
         deadman::instruction::ReleaseVestedToken { index: 1 },
         &c,
@@ -1220,7 +1227,7 @@ fn vesting_releases_pay_the_fee_in_skr() {
     );
     env.run(ix).unwrap();
     assert_eq!(env.balance(&ata(&c, &usdc)), 500 * SKR);
-    let usdc_fee = model_fee(500 * SKR, USDC_PRICE, 6, 150);
+    let usdc_fee = model_fee(500 * SKR, SKR_PER_USDC, 6, 150);
     assert_eq!(
         env.vault().skr_fee_reserve,
         10_000 * SKR - sol_fee - usdc_fee
@@ -1242,23 +1249,15 @@ fn plans_without_a_reserve_need_no_fee_accounts() {
 }
 
 #[test]
-fn quote_math_handles_exponents_and_overflow() {
+fn quote_math_handles_decimals_rounding_and_overflow() {
     use deadman::skr_fee_quote;
-    // Same exponents and decimals: 1.5% of 1,000,000 units at equal prices.
-    assert_eq!(
-        skr_fee_quote(1_000_000, (5, -2), 6, (5, -2), 6, 150),
-        Some(15_000)
-    );
-    // Positive and mixed exponents scale either side.
-    assert_eq!(skr_fee_quote(1, (1, 2), 0, (1, 0), 0, 10_000), Some(100));
-    assert_eq!(skr_fee_quote(100, (1, 0), 2, (1, 0), 0, 10_000), Some(1));
+    // 1.5% of 1 SOL at 7,500 SKR per SOL: 112.5 SKR.
+    assert_eq!(skr_fee_quote(SOL, SKR_PER_SOL, 9, 150), Some(112_500_000));
+    // 0 decimals: whole units.
+    assert_eq!(skr_fee_quote(2, 3, 0, 10_000), Some(6));
     // Round up.
-    assert_eq!(skr_fee_quote(1, (1, 0), 0, (3, 0), 0, 10_000), Some(1));
-    // Overflow, out-of-range scale and a zero price are refused.
-    assert_eq!(
-        skr_fee_quote(u64::MAX, (u64::MAX, 0), 0, (1, 0), 0, 500),
-        None
-    );
-    assert_eq!(skr_fee_quote(1, (1, 40), 0, (1, 0), 0, 150), None);
-    assert_eq!(skr_fee_quote(1, (1, 0), 0, (0, 0), 0, 150), None);
+    assert_eq!(skr_fee_quote(1, 1, 6, 150), Some(1));
+    // Overflow is refused.
+    assert_eq!(skr_fee_quote(u64::MAX, u64::MAX, 0, 500), None);
+    assert_eq!(skr_fee_quote(u64::MAX, u64::MAX, 9, 500), None);
 }

@@ -91,12 +91,15 @@ pub struct SkrFeePaid {
     pub burned: u64,
 }
 
+/// The SKR rates were set by the admin or updated by the rate authority
+/// (`by`).
 #[event]
-pub struct PriceFeedSet {
-    pub mint: Pubkey,
-    pub feed_id: [u8; 32],
-    pub price_account: Pubkey,
-    pub max_age_secs: u32,
+pub struct SkrRatesSet {
+    pub by: Pubkey,
+    pub authority: Pubkey,
+    pub usdc_mint: Pubkey,
+    pub skr_per_sol: u64,
+    pub skr_per_usdc: u64,
 }
 
 #[event]

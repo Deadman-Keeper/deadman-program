@@ -11,7 +11,7 @@ use crate::{
     error::DeadmanError,
     events::*,
     state::{
-        bps_of, skr_fee_quote, split_fee, stipend_bit, Config, PlanKind, PriceFeed, Rail, Vault,
+        bps_of, skr_fee_quote, split_fee, stipend_bit, Config, PlanKind, Rail, SkrRates, Vault,
     },
 };
 
@@ -94,27 +94,20 @@ fn vault_transfer<'info>(
     invoke_signed(&ix, &infos, &[seeds]).map_err(Into::into)
 }
 
-/// Price of `mint` per the registry. `feed` must be the mint's PriceFeed
-/// and `price` that feed's price account, or, when no feed is registered,
-/// `feed` the still-empty PriceFeed address (then there is no price).
-/// None also when the price is unusable (see [`PriceFeed::usable_price`]).
-fn registered_price(
-    feed: &AccountInfo,
-    price: &AccountInfo,
-    mint: &Pubkey,
-    now: i64,
-) -> Result<Option<(u64, i32)>> {
-    if feed.owner == &crate::ID {
-        let f = PriceFeed::try_deserialize(&mut &feed.try_borrow_data()?[..])?;
-        require!(
-            f.mint == *mint && price.key() == f.price_account,
-            DeadmanError::InvalidSkrFeeAccounts
-        );
-        return Ok(f.usable_price(price, now));
+/// The SKR rate of `mint` (see [`SkrRates::rate`]). `rates` must be the
+/// SkrRates account or, before the admin has set any rate, its still-empty
+/// address (then there is no rate).
+fn skr_rate(rates: &AccountInfo, mint: &Pubkey, now: i64) -> Result<Option<u64>> {
+    if rates.owner == &crate::ID {
+        let r = SkrRates::try_deserialize(&mut &rates.try_borrow_data()?[..])?;
+        let pda = Pubkey::create_program_address(&[SKR_RATES_SEED, &[r.bump]], &crate::ID)
+            .map_err(|_| DeadmanError::InvalidSkrFeeAccounts)?;
+        require!(rates.key() == pda, DeadmanError::InvalidSkrFeeAccounts);
+        return Ok(r.rate(mint, now));
     }
-    let (pda, _) = Pubkey::find_program_address(&[PRICE_FEED_SEED, mint.as_ref()], &crate::ID);
+    let (pda, _) = Pubkey::find_program_address(&[SKR_RATES_SEED], &crate::ID);
     require!(
-        feed.key() == pda && feed.data_is_empty(),
+        rates.key() == pda && rates.data_is_empty(),
         DeadmanError::InvalidSkrFeeAccounts
     );
     Ok(None)
@@ -146,20 +139,19 @@ fn treasury_takes_skr(info: &AccountInfo, config: &Config) -> Result<bool> {
 
 /// Pays the release fee of a payout of `gross` units of `asset_mint` (SOL:
 /// the wrapped SOL mint) in SKR from the plan's fee reserve:
-/// `fee_bps_skr` of the payout's value, rounded up, `skr_burn_bps` of it
-/// burned and the rest sent to the treasury. Returns true if it did, so
-/// the beneficiary gets the whole payout. Returns false, leaving the asset
-/// fee to be charged, when the plan has no reserve in the config's SKR
-/// mint, a price is unregistered, disabled, stale, not fully verified or
-/// too uncertain, the reserve cannot cover the fee, or the treasury has no
-/// usable SKR account.
+/// `fee_bps_skr` of the payout's value at the operator-set SKR rate,
+/// rounded up, `skr_burn_bps` of it burned and the rest sent to the
+/// treasury. Returns true if it did, so the beneficiary gets the whole
+/// payout. Returns false, leaving the asset fee to be charged, when the
+/// plan has no reserve in the config's SKR mint, the asset is not SOL or
+/// USDC, its rate is unset, disabled or older than a day, the reserve
+/// cannot cover the fee, or the treasury has no usable SKR account.
 ///
 /// With a reserve the executor must pass, as remaining accounts in this
-/// order: the asset's PriceFeed and its price account, SKR's PriceFeed and
-/// its price account, the vault's SKR ATA, the SKR mint (writable), the
-/// treasury's SKR ATA (writable) and the Token program. All are checked
-/// against the registry, the config and the plan, so an executor cannot
-/// choose the price.
+/// order: the SkrRates account, the vault's SKR ATA (writable), the SKR
+/// mint (writable), the treasury's SKR ATA (writable) and the Token
+/// program. All are checked against the program, the config and the plan,
+/// so an executor cannot choose the rate.
 #[allow(clippy::too_many_arguments)]
 fn pay_fee_in_skr<'info>(
     vault: &mut Account<'info, Vault>,
@@ -178,9 +170,7 @@ fn pay_fee_in_skr<'info>(
     {
         return Ok(false);
     }
-    let [asset_feed, asset_price, skr_feed, skr_price, vault_skr, mint, treasury_skr, token_program, ..] =
-        remaining
-    else {
+    let [rates, vault_skr, mint, treasury_skr, token_program, ..] = remaining else {
         return err!(DeadmanError::SkrFeeAccountsRequired);
     };
     let vault_key = vault.key();
@@ -191,10 +181,7 @@ fn pay_fee_in_skr<'info>(
                 == get_associated_token_address_with_program_id(&vault_key, &skr_mint, &token::ID),
         DeadmanError::InvalidSkrFeeAccounts
     );
-    let (Some(asset_px), Some(skr_px)) = (
-        registered_price(asset_feed, asset_price, &asset_mint, now)?,
-        registered_price(skr_feed, skr_price, &skr_mint, now)?,
-    ) else {
+    let Some(rate) = skr_rate(rates, &asset_mint, now)? else {
         return Ok(false);
     };
     let source = TokenAccount::try_deserialize(&mut &vault_skr.try_borrow_data()?[..])?;
@@ -202,15 +189,9 @@ fn pay_fee_in_skr<'info>(
     if source.is_frozen() || !treasury_takes_skr(treasury_skr, config)? {
         return Ok(false);
     }
-    let Some(fee) = skr_fee_quote(
-        gross,
-        asset_px,
-        asset_decimals,
-        skr_px,
-        decimals,
-        config.fee_bps_skr,
-    )
-    .filter(|f| *f <= vault.skr_fee_reserve && *f <= source.amount) else {
+    let Some(fee) = skr_fee_quote(gross, rate, asset_decimals, config.fee_bps_skr)
+        .filter(|f| *f <= vault.skr_fee_reserve && *f <= source.amount)
+    else {
         return Ok(false);
     };
 

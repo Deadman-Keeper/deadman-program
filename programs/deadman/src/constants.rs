@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 
 pub const CONFIG_SEED: &[u8] = b"config";
 pub const VAULT_SEED: &[u8] = b"vault";
-pub const PRICE_FEED_SEED: &[u8] = b"price_feed";
+pub const SKR_RATES_SEED: &[u8] = b"skr_rates";
 
 pub const MAX_RULES: usize = 8;
 /// Plan label length in bytes.
@@ -48,16 +48,14 @@ pub const MIN_VEST_PERIOD_SECS: i64 = 60;
 pub const CLOAK_GAS_STIPEND: u64 = 12_000_000;
 pub const ZCASH_GAS_STIPEND: u64 = 3_000_000;
 
-/// Pyth Solana Receiver: owns every `PriceUpdateV2` account.
-pub const PYTH_RECEIVER_ID: Pubkey = pubkey!("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ");
-/// Pyth push oracle: its PDAs `[shard_id LE, feed_id]` are the canonical,
-/// continuously updated price accounts.
-pub const PYTH_PUSH_ORACLE_ID: Pubkey = pubkey!("pythWSnswVUd12oZpeFP8e9CVaEqJg25g1Vtc2biRsT");
-/// SOL's price feed is registered under the wrapped SOL mint.
+/// SOL's SKR rate is looked up under the wrapped SOL mint.
 pub const NATIVE_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
 pub const SOL_DECIMALS: u8 = 9;
-/// Longest staleness the admin may allow for a price feed.
-pub const MAX_PRICE_AGE_SECS: u32 = 3_600;
-/// A price is usable only if its confidence interval is at most this share
-/// of the price: 2%.
-pub const MAX_PRICE_CONF_BPS: u64 = 200;
+/// SKR rates older than this are unusable: the payout pays the fee in its
+/// own asset instead.
+pub const SKR_RATE_MAX_AGE_SECS: i64 = SECS_PER_DAY;
+/// The rate authority may move each rate at most 20% from its reference,
+/// which rolls forward to the current rates once per window, so a leaked
+/// rate key moves a rate at most 20% a day.
+pub const MAX_RATE_STEP_BPS: u64 = 2_000;
+pub const RATE_REF_WINDOW_SECS: i64 = SECS_PER_DAY;

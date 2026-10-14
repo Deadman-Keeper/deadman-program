@@ -67,83 +67,103 @@ impl Config {
     }
 }
 
-/// Admin registry entry: the Pyth feed that prices `mint` (SOL under the
-/// wrapped SOL mint) and the one price account payouts may read it from.
+/// Operator-set SKR prices of SOL and USDC, used only to charge a SOL or
+/// USDC payout's release fee in SKR from the plan's fee reserve. One
+/// account for the program, created by the admin.
 #[account]
 #[derive(InitSpace)]
-pub struct PriceFeed {
-    pub mint: Pubkey,
-    pub feed_id: [u8; 32],
-    /// The canonical push-oracle account of `feed_id`, kept fresh by Pyth or
-    /// by our pusher. Executors cannot substitute another update.
-    pub price_account: Pubkey,
-    /// Older prices are unusable; 0 disables the feed.
-    pub max_age_secs: u32,
+pub struct SkrRates {
+    /// The rate updater (the operator's price script). Bounded by
+    /// [`SkrRates::bounded_update`]; the admin may set any rate.
+    pub authority: Pubkey,
+    pub usdc_mint: Pubkey,
+    /// SKR base units per whole SOL; 0 disables SOL.
+    pub skr_per_sol: u64,
+    /// SKR base units per whole USDC; 0 disables USDC.
+    pub skr_per_usdc: u64,
+    pub updated_at: i64,
+    /// The rates the authority's updates are bounded around, taken at
+    /// `ref_at` and rolled forward once per `RATE_REF_WINDOW_SECS`.
+    pub ref_skr_per_sol: u64,
+    pub ref_skr_per_usdc: u64,
+    pub ref_at: i64,
     pub bump: u8,
 }
 
-impl PriceFeed {
-    pub const SPACE: usize = 8 + PriceFeed::INIT_SPACE;
+impl SkrRates {
+    pub const SPACE: usize = 8 + SkrRates::INIT_SPACE;
 
-    /// The price in `info` as (price, exponent) if `info` is a fully
-    /// verified `PriceUpdateV2` of this feed, at most `max_age_secs` old at
-    /// `now`, with a confidence interval of at most 2% of the price.
-    /// Parsed by hand: the Pyth crates pin an older anchor-lang.
-    pub fn usable_price(&self, info: &AccountInfo, now: i64) -> Option<(u64, i32)> {
-        if info.owner != &PYTH_RECEIVER_ID {
+    /// SKR base units per whole unit of `mint` (SOL: the wrapped SOL mint)
+    /// when `mint` is SOL or USDC, its rate is set and the rates are at most
+    /// `SKR_RATE_MAX_AGE_SECS` old at `now`.
+    pub fn rate(&self, mint: &Pubkey, now: i64) -> Option<u64> {
+        let rate = if *mint == NATIVE_MINT {
+            self.skr_per_sol
+        } else if *mint == self.usdc_mint && self.usdc_mint != Pubkey::default() {
+            self.skr_per_usdc
+        } else {
             return None;
+        };
+        let fresh = self.updated_at.checked_add(SKR_RATE_MAX_AGE_SECS)? >= now;
+        (rate > 0 && fresh).then_some(rate)
+    }
+
+    /// The rate authority's update: once the reference window has passed
+    /// the reference rolls forward to the current rates, then each new rate
+    /// must be 0 (disabled) or within `MAX_RATE_STEP_BPS` of its reference.
+    /// A rate whose reference is 0 can only be enabled by the admin.
+    pub fn bounded_update(&mut self, skr_per_sol: u64, skr_per_usdc: u64, now: i64) -> Result<()> {
+        let window_end = self
+            .ref_at
+            .checked_add(RATE_REF_WINDOW_SECS)
+            .ok_or(DeadmanError::MathOverflow)?;
+        if now >= window_end {
+            self.ref_skr_per_sol = self.skr_per_sol;
+            self.ref_skr_per_usdc = self.skr_per_usdc;
+            self.ref_at = now;
         }
-        let data = info.try_borrow_data().ok()?;
-        // discriminator, write_authority, verification_level (1 = Full,
-        // no payload), then the PriceFeedMessage.
-        if data.get(..8)? != PRICE_UPDATE_V2_DISCRIMINATOR || *data.get(40)? != 1 {
-            return None;
-        }
-        let msg = data.get(41..101)?;
-        let int = |r: core::ops::Range<usize>| -> Option<[u8; 8]> { msg.get(r)?.try_into().ok() };
-        let price = i64::from_le_bytes(int(32..40)?);
-        let conf = u64::from_le_bytes(int(40..48)?);
-        let expo = i32::from_le_bytes(msg.get(48..52)?.try_into().ok()?);
-        let publish_time = i64::from_le_bytes(int(52..60)?);
-        let price = u64::try_from(price).ok().filter(|p| *p > 0)?;
-        let fresh = publish_time.checked_add(i64::from(self.max_age_secs))? >= now;
-        let tight = u128::from(conf).checked_mul(u128::from(BPS_DENOMINATOR))?
-            <= u128::from(price).checked_mul(u128::from(MAX_PRICE_CONF_BPS))?;
-        (msg.get(..32)? == self.feed_id && self.max_age_secs > 0 && fresh && tight)
-            .then_some((price, expo))
+        require!(
+            within_step(skr_per_sol, self.ref_skr_per_sol)?
+                && within_step(skr_per_usdc, self.ref_skr_per_usdc)?,
+            DeadmanError::RateChangeTooLarge
+        );
+        self.skr_per_sol = skr_per_sol;
+        self.skr_per_usdc = skr_per_usdc;
+        self.updated_at = now;
+        Ok(())
     }
 }
 
-/// `sha256("account:PriceUpdateV2")[..8]`.
-pub const PRICE_UPDATE_V2_DISCRIMINATOR: [u8; 8] = [0x22, 0xf1, 0x23, 0x63, 0x9d, 0x7e, 0xf4, 0xcd];
-
-/// SKR (base units) worth `fee_bps` of `gross` units of an asset, from
-/// both assets' prices and decimals, rounded up. None on overflow.
-pub fn skr_fee_quote(
-    gross: u64,
-    asset: (u64, i32),
-    asset_decimals: u8,
-    skr: (u64, i32),
-    skr_decimals: u8,
-    fee_bps: u16,
-) -> Option<u64> {
-    // fee = gross * pa * 10^ea / 10^da * bps / 10^4 / (ps * 10^es) * 10^ds
-    let scale = i64::from(asset.1)
-        .checked_sub(i64::from(skr.1))?
-        .checked_add(i64::from(skr_decimals))?
-        .checked_sub(i64::from(asset_decimals))?;
-    let pow = 10u128.checked_pow(u32::try_from(scale.unsigned_abs()).ok()?)?;
-    let mut num = u128::from(gross)
-        .checked_mul(u128::from(asset.0))?
-        .checked_mul(u128::from(fee_bps))?;
-    let mut den = u128::from(BPS_DENOMINATOR)
-        .checked_mul(u128::from(skr.0))
-        .filter(|d| *d > 0)?;
-    if scale >= 0 {
-        num = num.checked_mul(pow)?;
-    } else {
-        den = den.checked_mul(pow)?;
+/// Whether `rate` is 0 or within `MAX_RATE_STEP_BPS` of `reference`.
+fn within_step(rate: u64, reference: u64) -> Result<bool> {
+    if rate == 0 {
+        return Ok(true);
     }
+    let scaled = |r: u64, bps: u64| {
+        u128::from(r)
+            .checked_mul(u128::from(bps))
+            .ok_or(DeadmanError::MathOverflow)
+    };
+    let low = BPS_DENOMINATOR
+        .checked_sub(MAX_RATE_STEP_BPS)
+        .ok_or(DeadmanError::MathOverflow)?;
+    let high = BPS_DENOMINATOR
+        .checked_add(MAX_RATE_STEP_BPS)
+        .ok_or(DeadmanError::MathOverflow)?;
+    let value = scaled(rate, BPS_DENOMINATOR)?;
+    Ok(value >= scaled(reference, low)? && value <= scaled(reference, high)?)
+}
+
+/// SKR (base units) worth `fee_bps` of `gross` base units of an asset with
+/// `asset_decimals`, at `rate` SKR base units per whole unit of the asset,
+/// rounded up. None on overflow.
+pub fn skr_fee_quote(gross: u64, rate: u64, asset_decimals: u8, fee_bps: u16) -> Option<u64> {
+    let num = u128::from(gross)
+        .checked_mul(u128::from(rate))?
+        .checked_mul(u128::from(fee_bps))?;
+    let den = 10u128
+        .checked_pow(u32::from(asset_decimals))?
+        .checked_mul(u128::from(BPS_DENOMINATOR))?;
     u64::try_from(num.div_ceil(den)).ok()
 }
 

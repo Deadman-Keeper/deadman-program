@@ -1,5 +1,5 @@
 {
-  "address": "ACHVLMoLDM3YPpGbNST4cZW4Tf2jx6nzJGuusyLJHofL",
+  "address": "BonEyRsg5PJLwLyceeRAu2QwgduaHcqvPHoerz9uZwK",
   "metadata": {
     "name": "deadman",
     "version": "0.1.0",
@@ -777,7 +777,7 @@
         },
         {
           "name": "program",
-          "address": "ACHVLMoLDM3YPpGbNST4cZW4Tf2jx6nzJGuusyLJHofL"
+          "address": "BonEyRsg5PJLwLyceeRAu2QwgduaHcqvPHoerz9uZwK"
         },
         {
           "name": "program_data"
@@ -1477,16 +1477,16 @@
       ]
     },
     {
-      "name": "set_price_feed",
+      "name": "set_skr_rates",
       "discriminator": [
-        13,
-        15,
-        231,
-        129,
-        61,
-        7,
-        28,
-        122
+        215,
+        57,
+        237,
+        92,
+        24,
+        226,
+        105,
+        13
       ],
       "accounts": [
         {
@@ -1516,28 +1516,23 @@
           }
         },
         {
-          "name": "price_feed",
+          "name": "skr_rates",
           "writable": true,
           "pda": {
             "seeds": [
               {
                 "kind": "const",
                 "value": [
-                  112,
+                  115,
+                  107,
                   114,
-                  105,
-                  99,
-                  101,
                   95,
-                  102,
+                  114,
+                  97,
+                  116,
                   101,
-                  101,
-                  100
+                  115
                 ]
-              },
-              {
-                "kind": "arg",
-                "path": "mint"
               }
             ]
           }
@@ -1549,25 +1544,20 @@
       ],
       "args": [
         {
-          "name": "mint",
+          "name": "authority",
           "type": "pubkey"
         },
         {
-          "name": "feed_id",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
+          "name": "usdc_mint",
+          "type": "pubkey"
         },
         {
-          "name": "shard_id",
-          "type": "u16"
+          "name": "skr_per_sol",
+          "type": "u64"
         },
         {
-          "name": "max_age_secs",
-          "type": "u32"
+          "name": "skr_per_usdc",
+          "type": "u64"
         }
       ]
     },
@@ -1766,6 +1756,60 @@
           "type": {
             "option": "pubkey"
           }
+        }
+      ]
+    },
+    {
+      "name": "update_skr_rates",
+      "discriminator": [
+        155,
+        34,
+        234,
+        200,
+        238,
+        157,
+        12,
+        115
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "skr_rates"
+          ]
+        },
+        {
+          "name": "skr_rates",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  107,
+                  114,
+                  95,
+                  114,
+                  97,
+                  116,
+                  101,
+                  115
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "skr_per_sol",
+          "type": "u64"
+        },
+        {
+          "name": "skr_per_usdc",
+          "type": "u64"
         }
       ]
     },
@@ -2087,16 +2131,16 @@
       ]
     },
     {
-      "name": "PriceFeed",
+      "name": "SkrRates",
       "discriminator": [
-        189,
-        103,
-        252,
+        119,
         23,
-        152,
-        35,
-        243,
-        156
+        203,
+        225,
+        197,
+        165,
+        245,
+        145
       ]
     },
     {
@@ -2193,19 +2237,6 @@
       ]
     },
     {
-      "name": "PriceFeedSet",
-      "discriminator": [
-        194,
-        47,
-        73,
-        53,
-        154,
-        209,
-        254,
-        201
-      ]
-    },
-    {
       "name": "Pulsed",
       "discriminator": [
         50,
@@ -2255,6 +2286,19 @@
         54,
         65,
         163
+      ]
+    },
+    {
+      "name": "SkrRatesSet",
+      "discriminator": [
+        126,
+        193,
+        49,
+        215,
+        132,
+        71,
+        97,
+        21
       ]
     },
     {
@@ -2466,17 +2510,22 @@
     {
       "code": 6033,
       "name": "SkrFeeAccountsRequired",
-      "msg": "This plan has an SKR fee reserve: pass the price feeds and SKR accounts"
+      "msg": "This plan has an SKR fee reserve: pass the SKR rates and SKR accounts"
     },
     {
       "code": 6034,
       "name": "InvalidSkrFeeAccounts",
-      "msg": "A price feed or SKR fee account does not match the registry, plan or config"
+      "msg": "The SKR rates or an SKR fee account does not match the plan or config"
     },
     {
       "code": 6035,
       "name": "FeeReserveNotEmpty",
       "msg": "Withdraw the SKR fee reserve first"
+    },
+    {
+      "code": 6036,
+      "name": "RateChangeTooLarge",
+      "msg": "An SKR rate may move at most 20% a day from its reference"
     }
   ],
   "types": [
@@ -2704,79 +2753,6 @@
           {
             "name": "rules",
             "type": "u8"
-          }
-        ]
-      }
-    },
-    {
-      "name": "PriceFeed",
-      "docs": [
-        "Admin registry entry: the Pyth feed that prices `mint` (SOL under the",
-        "wrapped SOL mint) and the one price account payouts may read it from."
-      ],
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "mint",
-            "type": "pubkey"
-          },
-          {
-            "name": "feed_id",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "price_account",
-            "docs": [
-              "The canonical push-oracle account of `feed_id`, kept fresh by Pyth or",
-              "by our pusher. Executors cannot substitute another update."
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "max_age_secs",
-            "docs": [
-              "Older prices are unusable; 0 disables the feed."
-            ],
-            "type": "u32"
-          },
-          {
-            "name": "bump",
-            "type": "u8"
-          }
-        ]
-      }
-    },
-    {
-      "name": "PriceFeedSet",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "mint",
-            "type": "pubkey"
-          },
-          {
-            "name": "feed_id",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "price_account",
-            "type": "pubkey"
-          },
-          {
-            "name": "max_age_secs",
-            "type": "u32"
           }
         ]
       }
@@ -3056,6 +3032,101 @@
           },
           {
             "name": "burned",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SkrRates",
+      "docs": [
+        "Operator-set SKR prices of SOL and USDC, used only to charge a SOL or",
+        "USDC payout's release fee in SKR from the plan's fee reserve. One",
+        "account for the program, created by the admin."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "docs": [
+              "The rate updater (the operator's price script). Bounded by",
+              "[`SkrRates::bounded_update`]; the admin may set any rate."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "usdc_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "skr_per_sol",
+            "docs": [
+              "SKR base units per whole SOL; 0 disables SOL."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "skr_per_usdc",
+            "docs": [
+              "SKR base units per whole USDC; 0 disables USDC."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "updated_at",
+            "type": "i64"
+          },
+          {
+            "name": "ref_skr_per_sol",
+            "docs": [
+              "The rates the authority's updates are bounded around, taken at",
+              "`ref_at` and rolled forward once per `RATE_REF_WINDOW_SECS`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "ref_skr_per_usdc",
+            "type": "u64"
+          },
+          {
+            "name": "ref_at",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SkrRatesSet",
+      "docs": [
+        "The SKR rates were set by the admin or updated by the rate authority",
+        "(`by`)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "by",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "usdc_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "skr_per_sol",
+            "type": "u64"
+          },
+          {
+            "name": "skr_per_usdc",
             "type": "u64"
           }
         ]

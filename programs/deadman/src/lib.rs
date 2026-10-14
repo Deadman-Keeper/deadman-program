@@ -10,7 +10,7 @@ pub use constants::*;
 pub use instructions::*;
 pub use state::*;
 
-declare_id!("ACHVLMoLDM3YPpGbNST4cZW4Tf2jx6nzJGuusyLJHofL");
+declare_id!("BonEyRsg5PJLwLyceeRAu2QwgduaHcqvPHoerz9uZwK");
 
 #[program]
 pub mod deadman {
@@ -176,14 +176,28 @@ pub mod deadman {
         instructions::funds::handle_execute_token_rule(ctx, index)
     }
 
-    pub fn set_price_feed(
-        ctx: Context<SetPriceFeed>,
-        mint: Pubkey,
-        feed_id: [u8; 32],
-        shard_id: u16,
-        max_age_secs: u32,
+    pub fn set_skr_rates(
+        ctx: Context<SetSkrRates>,
+        authority: Pubkey,
+        usdc_mint: Pubkey,
+        skr_per_sol: u64,
+        skr_per_usdc: u64,
     ) -> Result<()> {
-        instructions::config::handle_set_price_feed(ctx, mint, feed_id, shard_id, max_age_secs)
+        instructions::config::handle_set_skr_rates(
+            ctx,
+            authority,
+            usdc_mint,
+            skr_per_sol,
+            skr_per_usdc,
+        )
+    }
+
+    pub fn update_skr_rates(
+        ctx: Context<UpdateSkrRates>,
+        skr_per_sol: u64,
+        skr_per_usdc: u64,
+    ) -> Result<()> {
+        instructions::config::handle_update_skr_rates(ctx, skr_per_sol, skr_per_usdc)
     }
 
     pub fn fund_skr_reserve(ctx: Context<FundSkrReserve>, amount: u64) -> Result<()> {

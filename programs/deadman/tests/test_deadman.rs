@@ -2683,7 +2683,8 @@ fn vault_layout_keeps_client_offsets_and_reserved_space() {
     assert_eq!(&data[123..131], &GRACE.to_le_bytes());
     let v = env.vault();
     assert_eq!(v._reserved_interval, [0u8; 8]);
-    assert_eq!(v._reserved, [0u8; 15]);
+    assert_eq!(v._reserved, [0u8; 6]);
+    assert_eq!((v.gas_reserve, v.gas_ata_paid), (0, 0));
     assert_eq!(v.skr_fee_reserve, 0);
     assert_eq!(v.skr_reserve_mint, Pubkey::default());
     assert_eq!(v.vest_period_secs, 0);
@@ -3538,4 +3539,300 @@ fn set_config_migrates_a_v1_config() {
     let gross = env.withdrawable();
     env.execute_sol(0, &b.pubkey()).unwrap();
     assert_eq!(env.lamports(&b.pubkey()), gross - fee(gross, 100));
+}
+
+// Gas reserve: the plan pays whoever runs its payouts.
+
+const TIP: u64 = deadman::EXEC_TIP_LAMPORTS;
+const TX_FEE: u64 = 5_000;
+
+impl Env {
+    fn gas_ix<T: InstructionData>(&self, data: T, signer: &Pubkey) -> Instruction {
+        Instruction::new_with_bytes(
+            deadman::id(),
+            &data.data(),
+            deadman::accounts::GasReserve {
+                owner: *signer,
+                vault: self.vault_addr(),
+                system_program: system_program::ID,
+            }
+            .to_account_metas(None),
+        )
+    }
+
+    fn fund_gas(&mut self, amount: u64) -> Result<u64, String> {
+        let owner = self.owner.insecure_clone();
+        let ix = self.gas_ix(
+            deadman::instruction::FundGasReserve { amount },
+            &owner.pubkey(),
+        );
+        self.send(ix, &[&owner])
+    }
+
+    fn withdraw_gas(&mut self, amount: u64) -> Result<u64, String> {
+        let owner = self.owner.insecure_clone();
+        let ix = self.gas_ix(
+            deadman::instruction::WithdrawGasReserve { amount },
+            &owner.pubkey(),
+        );
+        self.send(ix, &[&owner])
+    }
+
+    fn keeper_lamports(&self) -> u64 {
+        self.lamports(&self.keeper.pubkey())
+    }
+
+    fn ata_rent(&self) -> u64 {
+        self.svm.minimum_balance_for_rent_exemption(165)
+    }
+}
+
+#[test]
+fn gas_reserve_is_funded_and_withdrawn_by_the_owner_only_and_never_pays_tiers() {
+    let b = Keypair::new();
+    let mut env = ready(all_to(&b.pubkey()));
+    env.deposit_sol(SOL);
+    let before = env.lamports(&env.vault_addr());
+    env.fund_gas(10_000_000).unwrap();
+    assert_eq!(env.vault().gas_reserve, 10_000_000);
+    assert_eq!(env.lamports(&env.vault_addr()), before + 10_000_000);
+
+    // Tier withdrawals see the deposit only.
+    let err = env.withdraw_sol(SOL + 1).unwrap_err();
+    assert!(err.contains("InsufficientFunds"), "{err}");
+
+    let intruder = Keypair::new();
+    env.svm.airdrop(&intruder.pubkey(), SOL).unwrap();
+    let ix = env.gas_ix(
+        deadman::instruction::FundGasReserve { amount: 1 },
+        &intruder.pubkey(),
+    );
+    assert!(env.send(ix, &[&intruder]).is_err(), "not the owner's plan");
+
+    let err = env.withdraw_gas(10_000_001).unwrap_err();
+    assert!(err.contains("InsufficientFunds"), "{err}");
+    let owner_before = env.lamports(&env.owner.pubkey());
+    env.withdraw_gas(4_000_000).unwrap();
+    assert_eq!(env.vault().gas_reserve, 6_000_000);
+    assert_eq!(
+        env.lamports(&env.owner.pubkey()),
+        owner_before + 4_000_000 - TX_FEE
+    );
+
+    // Funding works during lockdown; withdrawing does not.
+    let guard = env.guard.insecure_clone();
+    env.lockdown(&guard).unwrap();
+    env.fund_gas(1).unwrap();
+    let err = env.withdraw_gas(1).unwrap_err();
+    assert!(err.contains("VaultLocked"), "{err}");
+
+    // A due 100% tier pays the deposit, not the reserve.
+    env.advance(10 * DAY + 1);
+    env.execute_sol(0, &b.pubkey()).unwrap();
+    assert_eq!(env.lamports(&b.pubkey()), SOL - fee(SOL, FEE_PUBLIC));
+    assert_eq!(env.vault().gas_reserve, 6_000_001 - TIP);
+}
+
+#[test]
+fn a_sol_payout_pays_its_executor_from_the_gas_reserve() {
+    let b = Keypair::new();
+    let mut env = ready(all_to(&b.pubkey()));
+    env.deposit_sol(SOL);
+    env.fund_gas(1_000_000).unwrap();
+    env.advance(10 * DAY + 1);
+    let keeper = env.keeper_lamports();
+    env.execute_sol(0, &b.pubkey()).unwrap();
+    assert_eq!(env.keeper_lamports(), keeper + TIP - TX_FEE);
+    assert_eq!(env.vault().gas_reserve, 1_000_000 - TIP);
+    assert_eq!(env.lamports(&b.pubkey()), SOL - fee(SOL, FEE_PUBLIC));
+}
+
+#[test]
+fn without_a_gas_reserve_the_executor_pays_as_before() {
+    let b = Keypair::new();
+    let mut env = ready(all_to(&b.pubkey()));
+    env.deposit_sol(SOL);
+    env.advance(10 * DAY + 1);
+    let keeper = env.keeper_lamports();
+    env.execute_sol(0, &b.pubkey()).unwrap();
+    assert_eq!(env.keeper_lamports(), keeper - TX_FEE);
+}
+
+#[test]
+fn a_token_rule_refunds_the_token_account_rent_once_and_a_short_reserve_pays_what_it_holds() {
+    let (b, c) = (Keypair::new(), Keypair::new());
+    let mut env = ready(all_to(&Keypair::new().pubkey()));
+    let mint = env.token_setup(1_000_000);
+    env.update_plan(
+        vec![
+            rule(
+                &b.pubkey(),
+                Rail::Solana,
+                10 * DAY,
+                Some(mint),
+                AmountMode::Fixed,
+                400_000,
+            ),
+            rule(
+                &c.pubkey(),
+                Rail::Solana,
+                10 * DAY,
+                Some(mint),
+                AmountMode::Fixed,
+                400_000,
+            ),
+        ],
+        None,
+    )
+    .unwrap();
+    let rent = env.ata_rent();
+    env.fund_gas(TIP + rent + TIP / 2).unwrap();
+    env.advance(10 * DAY + 1);
+
+    let keeper = env.keeper_lamports();
+    env.execute_token(0, &b.pubkey(), &mint).unwrap();
+    assert_eq!(env.keeper_lamports(), keeper + TIP + rent - TX_FEE);
+    let v = env.vault();
+    assert_eq!(v.gas_ata_paid, 0b01);
+    assert_eq!(v.gas_reserve, TIP / 2);
+
+    // The second tier would earn TIP + rent; the reserve has TIP / 2 left.
+    let keeper = env.keeper_lamports();
+    env.execute_token(1, &c.pubkey(), &mint).unwrap();
+    assert_eq!(env.keeper_lamports(), keeper + TIP / 2 - TX_FEE);
+    assert_eq!(env.vault().gas_reserve, 0);
+    assert_eq!(
+        env.token_balance(&ata(&c.pubkey(), &mint)),
+        400_000 - fee(400_000, FEE_PUBLIC)
+    );
+}
+
+#[test]
+fn a_skip_pays_its_caller_from_the_gas_reserve() {
+    let (a, b) = (Keypair::new(), Keypair::new());
+    let mut env = ready(vec![
+        rule(
+            &a.pubkey(),
+            Rail::Solana,
+            10 * DAY,
+            None,
+            AmountMode::Fixed,
+            1_000,
+        ),
+        rule(
+            &b.pubkey(),
+            Rail::Solana,
+            10 * DAY,
+            None,
+            AmountMode::Percent,
+            10_000,
+        ),
+    ]);
+    env.deposit_sol(SOL);
+    env.fund_gas(100_000).unwrap();
+    env.advance(40 * DAY + 1);
+    let keeper = env.keeper_lamports();
+    env.skip(0).unwrap();
+    assert_eq!(env.keeper_lamports(), keeper + TIP - TX_FEE);
+    assert_eq!(env.vault().rules[0].reserved, 1_000, "the reserve is apart");
+    env.execute_sol(1, &b.pubkey()).unwrap();
+    assert_eq!(env.vault().gas_reserve, 100_000 - 2 * TIP);
+}
+
+#[test]
+fn vesting_tips_only_releases_of_one_percent_or_the_last() {
+    let b = Keypair::new();
+    let mut env = Env::new();
+    env.init_config();
+    let start = env.now();
+    env.create_vesting(
+        start,
+        false,
+        vec![VestingInput {
+            beneficiary: b.pubkey(),
+            rail: Rail::Solana,
+            mint: None,
+            total: 10 * SOL,
+            cliff_secs: 0,
+            duration_secs: 100 * DAY,
+        }],
+    )
+    .unwrap();
+    env.deposit_sol(10 * SOL);
+    env.fund_gas(1_000_000).unwrap();
+
+    // Half a day: 0.5% of the schedule, no tip.
+    env.advance(DAY / 2);
+    let keeper = env.keeper_lamports();
+    env.release(0, &b.pubkey()).unwrap();
+    assert_eq!(env.keeper_lamports(), keeper - TX_FEE);
+    assert_eq!(env.vault().gas_reserve, 1_000_000);
+
+    // A day and a half more: 1.5% at once, tipped.
+    env.advance(DAY + DAY / 2);
+    let keeper = env.keeper_lamports();
+    env.release(0, &b.pubkey()).unwrap();
+    assert_eq!(env.keeper_lamports(), keeper + TIP - TX_FEE);
+
+    // Releasing again a minute later: dust, no tip.
+    env.advance(60);
+    let keeper = env.keeper_lamports();
+    env.release(0, &b.pubkey()).unwrap();
+    assert_eq!(env.keeper_lamports(), keeper - TX_FEE);
+
+    // The last release completes the schedule and is tipped even if small.
+    env.advance(98 * DAY - 61);
+    env.release(0, &b.pubkey()).unwrap();
+    env.advance(DAY);
+    let keeper = env.keeper_lamports();
+    env.release(0, &b.pubkey()).unwrap();
+    assert!(env.vault().rules[0].executed_at > 0, "fully released");
+    assert_eq!(env.keeper_lamports(), keeper + TIP - TX_FEE);
+    assert_eq!(env.vault().gas_reserve, 1_000_000 - 3 * TIP);
+}
+
+#[test]
+fn closing_returns_the_gas_reserve_to_the_owner() {
+    let b = Keypair::new();
+    let mut env = ready(all_to(&b.pubkey()));
+    env.fund_gas(7_000_000).unwrap();
+    let owner = env.owner.pubkey();
+    let before = env.lamports(&owner);
+    let vault = env.lamports(&env.vault_addr());
+    let ix = env.close_ix(&owner);
+    let signer = env.owner.insecure_clone();
+    env.send(ix, &[&signer]).unwrap();
+    assert_eq!(env.lamports(&owner), before + vault - TX_FEE);
+}
+
+#[test]
+fn editing_a_plan_keeps_the_token_account_refund_with_its_tier() {
+    let (b, c) = (Keypair::new(), Keypair::new());
+    let mut env = ready(all_to(&Keypair::new().pubkey()));
+    let mint = env.token_setup(1_000_000);
+    let tier = |who: &Keypair, after| {
+        rule(
+            &who.pubkey(),
+            Rail::Solana,
+            after,
+            Some(mint),
+            AmountMode::Fixed,
+            100_000,
+        )
+    };
+    env.update_plan(vec![tier(&b, 10 * DAY), tier(&c, 20 * DAY)], None)
+        .unwrap();
+    env.fund_gas(SOL / 10).unwrap();
+    env.advance(10 * DAY + 1);
+    env.execute_token(0, &b.pubkey(), &mint).unwrap();
+    assert_eq!(env.vault().gas_ata_paid, 0b01);
+    // The paid tier stays at index 0 with its bit; the new tier starts clear.
+    env.update_plan(vec![tier(&c, 20 * DAY)], None).unwrap();
+    assert_eq!(env.vault().gas_ata_paid, 0b01);
+    let rent = env.ata_rent();
+    env.advance(20 * DAY + 1);
+    let keeper = env.keeper_lamports();
+    env.execute_token(1, &c.pubkey(), &mint).unwrap();
+    assert_eq!(env.keeper_lamports(), keeper + TIP + rent - TX_FEE);
+    assert_eq!(env.vault().gas_ata_paid, 0b11);
 }

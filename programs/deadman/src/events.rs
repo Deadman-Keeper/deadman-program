@@ -91,6 +91,24 @@ pub struct SkrFeePaid {
     pub burned: u64,
 }
 
+/// [`amount`] lamports of the plan's gas reserve paid whoever ran rule
+/// [`index`]'s payout or skip.
+#[event]
+pub struct GasTipPaid {
+    pub vault: Pubkey,
+    pub index: u8,
+    pub executor: Pubkey,
+    pub amount: u64,
+}
+
+/// The owner funded or withdrew the gas reserve; [`gas_reserve`] is the new
+/// total.
+#[event]
+pub struct GasReserveChanged {
+    pub vault: Pubkey,
+    pub gas_reserve: u64,
+}
+
 /// The SKR rates were set by the admin or updated by the rate authority
 /// (`by`).
 #[event]

@@ -308,8 +308,10 @@
         {
           "name": "executor",
           "docs": [
-            "Anyone: the beneficiary, a keeper, or the protocol's own bot."
+            "Anyone: the beneficiary, a keeper, or the protocol's own bot.",
+            "Writable: it is paid from the plan's gas reserve."
           ],
+          "writable": true,
           "signer": true
         },
         {
@@ -389,6 +391,10 @@
       "accounts": [
         {
           "name": "executor",
+          "docs": [
+            "Writable: it is paid from the plan's gas reserve."
+          ],
+          "writable": true,
           "signer": true
         },
         {
@@ -588,6 +594,66 @@
         {
           "name": "index",
           "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "fund_gas_reserve",
+      "discriminator": [
+        13,
+        179,
+        23,
+        73,
+        23,
+        211,
+        125,
+        238
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "vault.plan_id",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
         }
       ]
     },
@@ -1009,8 +1075,10 @@
         {
           "name": "executor",
           "docs": [
-            "Anyone: the beneficiary, a keeper, or the protocol's own bot."
+            "Anyone: the beneficiary, a keeper, or the protocol's own bot.",
+            "Writable: it is paid from the plan's gas reserve."
           ],
+          "writable": true,
           "signer": true
         },
         {
@@ -1090,6 +1158,10 @@
       "accounts": [
         {
           "name": "executor",
+          "docs": [
+            "Writable: it is paid from the plan's gas reserve."
+          ],
+          "writable": true,
           "signer": true
         },
         {
@@ -1577,8 +1649,10 @@
         {
           "name": "caller",
           "docs": [
-            "Anyone: usually a later beneficiary or the keeper."
+            "Anyone: usually a later beneficiary or the keeper. Writable: it is",
+            "paid from the plan's gas reserve."
           ],
+          "writable": true,
           "signer": true
         },
         {
@@ -1809,6 +1883,66 @@
         },
         {
           "name": "skr_per_usdc",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "withdraw_gas_reserve",
+      "discriminator": [
+        226,
+        251,
+        146,
+        193,
+        75,
+        248,
+        116,
+        138
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "vault"
+          ]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "vault.plan_id",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
           "type": "u64"
         }
       ]
@@ -2195,6 +2329,32 @@
         224,
         44,
         218
+      ]
+    },
+    {
+      "name": "GasReserveChanged",
+      "discriminator": [
+        250,
+        145,
+        245,
+        131,
+        223,
+        150,
+        231,
+        173
+      ]
+    },
+    {
+      "name": "GasTipPaid",
+      "discriminator": [
+        205,
+        56,
+        194,
+        126,
+        121,
+        158,
+        111,
+        167
       ]
     },
     {
@@ -2666,6 +2826,54 @@
           },
           {
             "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GasReserveChanged",
+      "docs": [
+        "The owner funded or withdrew the gas reserve; [`gas_reserve`] is the new",
+        "total."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "gas_reserve",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GasTipPaid",
+      "docs": [
+        "[`amount`] lamports of the plan's gas reserve paid whoever ran rule",
+        "[`index`]'s payout or skip."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u8"
+          },
+          {
+            "name": "executor",
             "type": "pubkey"
           },
           {
@@ -3346,6 +3554,23 @@
             "type": "pubkey"
           },
           {
+            "name": "gas_reserve",
+            "docs": [
+              "SOL the owner set aside (`fund_gas_reserve`) to pay whoever runs a",
+              "payout or a skip, so no beneficiary has to. Held in the vault's",
+              "lamports but never paid to tiers."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "gas_ata_paid",
+            "docs": [
+              "Bit `i` set once rule `i`'s first token payout refunded the executor",
+              "the beneficiary's token account rent from the gas reserve."
+            ],
+            "type": "u8"
+          },
+          {
             "name": "_reserved",
             "docs": [
               "Zeroed space for future fields; see the layout note above."
@@ -3353,7 +3578,7 @@
             "type": {
               "array": [
                 "u8",
-                15
+                6
               ]
             }
           }

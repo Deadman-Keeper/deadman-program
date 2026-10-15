@@ -46,6 +46,16 @@ pub const MIN_VEST_PERIOD_SECS: i64 = 60;
 /// 0.01 SOL on the claim key plus fees; a Zcash (1Click) deposit needs the
 /// deposit address's ATA rent plus fees.
 pub const CLOAK_GAS_STIPEND: u64 = 12_000_000;
+/// What a payout pays whoever runs it, from the plan's gas reserve: the
+/// network fee with room for a priority fee.
+pub const EXEC_TIP_LAMPORTS: u64 = 10_000;
+/// SPL token account size: a token rule's first payout also refunds the
+/// executor the rent of the beneficiary's token account.
+pub const TOKEN_ACCOUNT_LEN: usize = 165;
+/// A vesting release pays its executor only if it releases at least this
+/// share of the schedule (1 / MAX_VEST_TIPS) or completes it, so one
+/// schedule pays at most about this many tips however often it is called.
+pub const MAX_VEST_TIPS: u64 = 100;
 pub const ZCASH_GAS_STIPEND: u64 = 3_000_000;
 
 /// SOL's SKR rate is looked up under the wrapped SOL mint.

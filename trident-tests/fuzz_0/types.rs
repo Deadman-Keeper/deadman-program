@@ -633,7 +633,7 @@ pub mod deadman {
         }
 
         pub fn accounts(mut self, accounts: ExecuteSolRuleInstructionAccounts) -> Self {
-            self.accounts.executor = AccountMeta::new_readonly(accounts.executor, true);
+            self.accounts.executor = AccountMeta::new(accounts.executor, true);
 
             self.accounts.vault = AccountMeta::new(accounts.vault, false);
 
@@ -797,7 +797,7 @@ pub mod deadman {
         }
 
         pub fn accounts(mut self, accounts: ExecuteTokenRuleInstructionAccounts) -> Self {
-            self.accounts.executor = AccountMeta::new_readonly(accounts.executor, true);
+            self.accounts.executor = AccountMeta::new(accounts.executor, true);
 
             self.accounts.vault = AccountMeta::new(accounts.vault, false);
 
@@ -846,6 +846,107 @@ pub mod deadman {
             metas.push(self.accounts.treasury_token.clone());
 
             metas.push(self.accounts.token_program.clone());
+
+            metas.extend(self.remaining_accounts.clone());
+            metas
+        }
+
+        pub fn instruction(&self) -> Instruction {
+            let mut buffer: Vec<u8> = Vec::new();
+
+            buffer.extend_from_slice(&Self::discriminator());
+
+            self.data.serialize(&mut buffer).unwrap();
+
+            Instruction::new_with_bytes(program_id(), &buffer, self.to_account_metas())
+        }
+    }
+
+    // ....................................................................
+    // Instruction: FundGasReserve
+    // ....................................................................
+
+    /// Main instruction struct for FundGasReserve
+    pub struct FundGasReserveInstruction {
+        pub accounts: FundGasReserveInstructionAccountMetas,
+        pub data: FundGasReserveInstructionData,
+        pub remaining_accounts: Vec<AccountMeta>,
+    }
+
+    /// Account metadata for FundGasReserve instruction
+    #[derive(Debug, Clone, Default)]
+    pub struct FundGasReserveInstructionAccountMetas {
+        pub owner: AccountMeta,
+
+        pub vault: AccountMeta,
+
+        pub system_program: AccountMeta,
+    }
+
+    /// Account pubkeys for FundGasReserve instruction
+    #[derive(Debug, Clone)]
+    pub struct FundGasReserveInstructionAccounts {
+        pub owner: Pubkey,
+
+        pub vault: Pubkey,
+    }
+
+    impl FundGasReserveInstructionAccounts {
+        pub fn new(owner: Pubkey, vault: Pubkey) -> Self {
+            Self { owner, vault }
+        }
+    }
+
+    /// Instruction data for FundGasReserve
+    #[derive(Debug, BorshDeserialize, BorshSerialize, Clone)]
+    pub struct FundGasReserveInstructionData {
+        pub amount: u64,
+    }
+
+    impl FundGasReserveInstructionData {
+        pub fn new(amount: u64) -> Self {
+            Self { amount }
+        }
+    }
+
+    /// Implementation for FundGasReserveInstruction
+    impl FundGasReserveInstruction {
+        fn discriminator() -> [u8; 8] {
+            [13u8, 179u8, 23u8, 73u8, 23u8, 211u8, 125u8, 238u8]
+        }
+
+        pub fn data(data: FundGasReserveInstructionData) -> Self {
+            Self {
+                accounts: FundGasReserveInstructionAccountMetas::default(),
+                data,
+                remaining_accounts: Vec::new(),
+            }
+        }
+
+        pub fn accounts(mut self, accounts: FundGasReserveInstructionAccounts) -> Self {
+            self.accounts.owner = AccountMeta::new(accounts.owner, true);
+
+            self.accounts.vault = AccountMeta::new(accounts.vault, false);
+
+            self.accounts.system_program =
+                AccountMeta::new_readonly(pubkey!("11111111111111111111111111111111"), false);
+
+            self
+        }
+
+        pub fn remaining_accounts(mut self, accounts: Vec<AccountMeta>) -> Self {
+            self.remaining_accounts = accounts;
+            self
+        }
+
+        fn to_account_metas(&self) -> Vec<AccountMeta> {
+            let mut metas = Vec::new();
+
+            metas.push(self.accounts.owner.clone());
+
+            metas.push(self.accounts.vault.clone());
+
+            metas.push(self.accounts.system_program.clone());
 
             metas.extend(self.remaining_accounts.clone());
             metas
@@ -1619,7 +1720,7 @@ pub mod deadman {
         }
 
         pub fn accounts(mut self, accounts: ReleaseVestedSolInstructionAccounts) -> Self {
-            self.accounts.executor = AccountMeta::new_readonly(accounts.executor, true);
+            self.accounts.executor = AccountMeta::new(accounts.executor, true);
 
             self.accounts.vault = AccountMeta::new(accounts.vault, false);
 
@@ -1783,7 +1884,7 @@ pub mod deadman {
         }
 
         pub fn accounts(mut self, accounts: ReleaseVestedTokenInstructionAccounts) -> Self {
-            self.accounts.executor = AccountMeta::new_readonly(accounts.executor, true);
+            self.accounts.executor = AccountMeta::new(accounts.executor, true);
 
             self.accounts.vault = AccountMeta::new(accounts.vault, false);
 
@@ -2384,7 +2485,7 @@ pub mod deadman {
         }
 
         pub fn accounts(mut self, accounts: SkipRuleInstructionAccounts) -> Self {
-            self.accounts.caller = AccountMeta::new_readonly(accounts.caller, true);
+            self.accounts.caller = AccountMeta::new(accounts.caller, true);
 
             self.accounts.vault = AccountMeta::new(accounts.vault, false);
 
@@ -2738,6 +2839,107 @@ pub mod deadman {
             metas.push(self.accounts.authority.clone());
 
             metas.push(self.accounts.skr_rates.clone());
+
+            metas.extend(self.remaining_accounts.clone());
+            metas
+        }
+
+        pub fn instruction(&self) -> Instruction {
+            let mut buffer: Vec<u8> = Vec::new();
+
+            buffer.extend_from_slice(&Self::discriminator());
+
+            self.data.serialize(&mut buffer).unwrap();
+
+            Instruction::new_with_bytes(program_id(), &buffer, self.to_account_metas())
+        }
+    }
+
+    // ....................................................................
+    // Instruction: WithdrawGasReserve
+    // ....................................................................
+
+    /// Main instruction struct for WithdrawGasReserve
+    pub struct WithdrawGasReserveInstruction {
+        pub accounts: WithdrawGasReserveInstructionAccountMetas,
+        pub data: WithdrawGasReserveInstructionData,
+        pub remaining_accounts: Vec<AccountMeta>,
+    }
+
+    /// Account metadata for WithdrawGasReserve instruction
+    #[derive(Debug, Clone, Default)]
+    pub struct WithdrawGasReserveInstructionAccountMetas {
+        pub owner: AccountMeta,
+
+        pub vault: AccountMeta,
+
+        pub system_program: AccountMeta,
+    }
+
+    /// Account pubkeys for WithdrawGasReserve instruction
+    #[derive(Debug, Clone)]
+    pub struct WithdrawGasReserveInstructionAccounts {
+        pub owner: Pubkey,
+
+        pub vault: Pubkey,
+    }
+
+    impl WithdrawGasReserveInstructionAccounts {
+        pub fn new(owner: Pubkey, vault: Pubkey) -> Self {
+            Self { owner, vault }
+        }
+    }
+
+    /// Instruction data for WithdrawGasReserve
+    #[derive(Debug, BorshDeserialize, BorshSerialize, Clone)]
+    pub struct WithdrawGasReserveInstructionData {
+        pub amount: u64,
+    }
+
+    impl WithdrawGasReserveInstructionData {
+        pub fn new(amount: u64) -> Self {
+            Self { amount }
+        }
+    }
+
+    /// Implementation for WithdrawGasReserveInstruction
+    impl WithdrawGasReserveInstruction {
+        fn discriminator() -> [u8; 8] {
+            [226u8, 251u8, 146u8, 193u8, 75u8, 248u8, 116u8, 138u8]
+        }
+
+        pub fn data(data: WithdrawGasReserveInstructionData) -> Self {
+            Self {
+                accounts: WithdrawGasReserveInstructionAccountMetas::default(),
+                data,
+                remaining_accounts: Vec::new(),
+            }
+        }
+
+        pub fn accounts(mut self, accounts: WithdrawGasReserveInstructionAccounts) -> Self {
+            self.accounts.owner = AccountMeta::new(accounts.owner, true);
+
+            self.accounts.vault = AccountMeta::new(accounts.vault, false);
+
+            self.accounts.system_program =
+                AccountMeta::new_readonly(pubkey!("11111111111111111111111111111111"), false);
+
+            self
+        }
+
+        pub fn remaining_accounts(mut self, accounts: Vec<AccountMeta>) -> Self {
+            self.remaining_accounts = accounts;
+            self
+        }
+
+        fn to_account_metas(&self) -> Vec<AccountMeta> {
+            let mut metas = Vec::new();
+
+            metas.push(self.accounts.owner.clone());
+
+            metas.push(self.accounts.vault.clone());
+
+            metas.push(self.accounts.system_program.clone());
 
             metas.extend(self.remaining_accounts.clone());
             metas
@@ -3293,6 +3495,46 @@ impl FeeBurned {
     }
 }
 
+/// Custom struct: GasReserveChanged
+#[derive(Debug, BorshDeserialize, BorshSerialize, Clone)]
+pub struct GasReserveChanged {
+    pub vault: Pubkey,
+
+    pub gas_reserve: u64,
+}
+
+impl GasReserveChanged {
+    pub fn new(vault: Pubkey, gas_reserve: u64) -> Self {
+        Self { vault, gas_reserve }
+    }
+}
+
+/// Custom struct: GasTipPaid
+#[derive(Debug, BorshDeserialize, BorshSerialize, Clone)]
+pub struct GasTipPaid {
+    pub vault: Pubkey,
+
+    pub index: u8,
+
+    pub executor: Pubkey,
+
+    pub amount: u64,
+}
+
+impl GasTipPaid {
+    pub fn new(vault: Pubkey, index: u8, executor: Pubkey, amount: u64) -> Self {
+        Self {
+            vault,
+
+            index,
+
+            executor,
+
+            amount,
+        }
+    }
+}
+
 /// Custom struct: LegacyVaultRecovered
 #[derive(Debug, BorshDeserialize, BorshSerialize, Clone)]
 pub struct LegacyVaultRecovered {
@@ -3810,7 +4052,11 @@ pub struct Vault {
 
     pub skr_reserve_mint: Pubkey,
 
-    pub _reserved: [u8; 15],
+    pub gas_reserve: u64,
+
+    pub gas_ata_paid: u8,
+
+    pub _reserved: [u8; 6],
 }
 
 impl Vault {
@@ -3869,7 +4115,11 @@ impl Vault {
 
         skr_reserve_mint: Pubkey,
 
-        _reserved: [u8; 15],
+        gas_reserve: u64,
+
+        gas_ata_paid: u8,
+
+        _reserved: [u8; 6],
     ) -> Self {
         Self {
             owner,
@@ -3925,6 +4175,10 @@ impl Vault {
             skr_fee_reserve,
 
             skr_reserve_mint,
+
+            gas_reserve,
+
+            gas_ata_paid,
 
             _reserved,
         }

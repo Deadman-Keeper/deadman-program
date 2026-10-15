@@ -318,8 +318,15 @@ pub struct Vault {
     /// Mint the reserve is held in: the config's SKR mint when it was
     /// funded, so a later SKR mint change cannot strand it.
     pub skr_reserve_mint: Pubkey,
+    /// SOL the owner set aside (`fund_gas_reserve`) to pay whoever runs a
+    /// payout or a skip, so no beneficiary has to. Held in the vault's
+    /// lamports but never paid to tiers.
+    pub gas_reserve: u64,
+    /// Bit `i` set once rule `i`'s first token payout refunded the executor
+    /// the beneficiary's token account rent from the gas reserve.
+    pub gas_ata_paid: u8,
     /// Zeroed space for future fields; see the layout note above.
-    pub _reserved: [u8; 15],
+    pub _reserved: [u8; 6],
 }
 
 impl Vault {
@@ -364,7 +371,9 @@ impl Vault {
             vest_period_secs: 0,
             skr_fee_reserve: 0,
             skr_reserve_mint: Pubkey::default(),
-            _reserved: [0; 15],
+            gas_reserve: 0,
+            gas_ata_paid: 0,
+            _reserved: [0; 6],
         }
     }
 
@@ -693,14 +702,18 @@ impl Vault {
                 && (MIN_SKIP_GRACE_SECS..=MAX_SKIP_GRACE_SECS).contains(&skip_grace_secs),
             DeadmanError::InvalidDuration
         );
-        // History keeps its order; each kept tier carries its stipend bit
-        // to its new index, and every new tier starts with a clear bit.
+        // History keeps its order; each kept tier carries its stipend and
+        // gas bits to its new index, and every new tier starts clear.
         let mut history: Vec<Rule> = Vec::with_capacity(MAX_RULES);
         let mut stipend_paid = 0u8;
+        let mut gas_ata_paid = 0u8;
         for (i, r) in self.rules.iter().enumerate() {
             if r.executed_at != 0 || r.skipped_at != 0 {
                 if self.stipend_paid & stipend_bit(i)? != 0 {
                     stipend_paid |= stipend_bit(history.len())?;
+                }
+                if self.gas_ata_paid & stipend_bit(i)? != 0 {
+                    gas_ata_paid |= stipend_bit(history.len())?;
                 }
                 history.push(*r);
             }
@@ -745,6 +758,7 @@ impl Vault {
         self.skip_grace_secs = skip_grace_secs;
         self.guardian = guardian;
         self.stipend_paid = stipend_paid;
+        self.gas_ata_paid = gas_ata_paid;
         self.rules = history;
         self.rules.extend(rules.iter().map(|r| Rule {
             beneficiary: r.beneficiary,

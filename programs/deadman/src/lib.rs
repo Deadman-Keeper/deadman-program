@@ -211,6 +211,14 @@ pub mod deadman {
         instructions::funds::handle_withdraw_skr_reserve(ctx, amount)
     }
 
+    pub fn fund_gas_reserve(ctx: Context<GasReserve>, amount: u64) -> Result<()> {
+        instructions::funds::handle_fund_gas_reserve(ctx, amount)
+    }
+
+    pub fn withdraw_gas_reserve(ctx: Context<GasReserve>, amount: u64) -> Result<()> {
+        instructions::funds::handle_withdraw_gas_reserve(ctx, amount)
+    }
+
     pub fn recover_legacy_vault(ctx: Context<RecoverLegacyVault>, plan_id: u16) -> Result<()> {
         instructions::vault::handle_recover_legacy_vault(ctx, plan_id)
     }

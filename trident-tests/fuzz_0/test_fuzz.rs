@@ -79,6 +79,11 @@ const RATER: Pubkey = Pubkey::new_from_array([8u8; 32]);
 /// SKR base units per whole SOL ($150 SOL, $0.02 SKR) and per whole USDC.
 const SKR_PER_SOL: u64 = 7_500_000_000;
 const SKR_PER_USDC: u64 = 50_000_000;
+/// `EXEC_TIP_LAMPORTS`, `MAX_VEST_TIPS` and the rent of a 165-byte token
+/// account.
+const EXEC_TIP: u64 = 10_000;
+const MAX_VEST_TIPS: u128 = 100;
+const TOKEN_ACCOUNT_LEN: usize = 165;
 
 #[derive(Clone, Copy, Debug)]
 enum Op {
@@ -95,6 +100,8 @@ enum Op {
     Withdraw(usize),
     Revoke(usize),
     Close(usize),
+    /// fund_gas_reserve / withdraw_gas_reserve
+    Gas(usize),
     /// fund_skr_reserve / withdraw_skr_reserve
     Reserve(usize),
 }
@@ -488,6 +495,12 @@ impl FuzzTest {
                     va.lamports >= va.v.rent_paid,
                     "INV-RENT vault {p} below rent_paid after {label}"
                 );
+                // INV-GAS: the vault always holds its gas reserve on top of
+                // its rent.
+                inv!(
+                    va.lamports >= self.rent_min(va.len).max(va.v.rent_paid) + va.v.gas_reserve,
+                    "INV-GAS vault {p} holds less than rent + gas reserve after {label}"
+                );
             }
             if let Some(va) = va {
                 let vt = a.tokens[self.tok_idx(&self.w.vault_atas[p])];
@@ -500,6 +513,19 @@ impl FuzzTest {
             let (Some(vb), Some(va)) = (vb, va) else {
                 continue;
             };
+            // INV-GAS: only the owner's gas instructions move the reserve
+            // up, and only payouts and skips spend it.
+            if va.v.gas_reserve > vb.v.gas_reserve {
+                inv!(
+                    matches!(op, Op::Gas(q) if q == p),
+                    "INV-GAS plan {p} gas reserve grew in {label}"
+                );
+            } else if va.v.gas_reserve < vb.v.gas_reserve {
+                inv!(
+                    matches!(op, Op::Gas(q) | Op::Pay { plan: q, .. } | Op::Skip(q, _) if q == p),
+                    "INV-GAS plan {p} gas reserve spent by {label}"
+                );
+            }
             if vb.v.skr_fee_reserve != va.v.skr_fee_reserve {
                 inv!(
                     matches!(op, Op::Reserve(q) | Op::Pay { plan: q, token: false, .. } if q == p),
@@ -582,10 +608,10 @@ impl FuzzTest {
                 inv!(now >= vb.v.locked_until, "INV-LOCK withdraw while locked");
                 let va = a.vaults[p].as_ref().unwrap();
                 let reserve = self.rent_min(va.len).max(va.v.rent_paid);
-                let free = va.lamports.saturating_sub(reserve);
+                let free = va.lamports.saturating_sub(reserve + va.v.gas_reserve);
                 let committed = model_committed_sol(&va.v) + model_reserved_sol(&va.v);
                 let committed_b = model_committed_sol(&vb.v) + model_reserved_sol(&vb.v);
-                let free_b = vb.lamports.saturating_sub(reserve);
+                let free_b = vb.lamports.saturating_sub(reserve + vb.v.gas_reserve);
                 if free_b >= committed_b {
                     inv!(
                         free >= committed,
@@ -703,6 +729,32 @@ impl FuzzTest {
                         "INV-DEADLINE skip out of per-asset order"
                     );
                 }
+                let va = a.vaults[p].as_ref().unwrap();
+                let tip = vb.v.gas_reserve - va.v.gas_reserve;
+                inv!(tip <= EXEC_TIP, "INV-GAS skip tipped {tip}");
+                inv_eq!(
+                    -self.ldelta(b, a, &self.w.vaults[p]),
+                    tip as i128,
+                    "INV-GAS skip moved vault lamports other than its tip"
+                );
+            }
+            Op::Gas(p) => {
+                let vb = b.vaults[p].as_ref().unwrap();
+                let va = a.vaults[p].as_ref().unwrap();
+                let moved = va.v.gas_reserve as i128 - vb.v.gas_reserve as i128;
+                inv_eq!(
+                    self.ldelta(b, a, &self.w.vaults[p]),
+                    moved,
+                    "INV-GAS {label}: vault lamports differ from the reserve change"
+                );
+                inv_eq!(
+                    self.ldelta(b, a, &self.w.owner),
+                    -moved,
+                    "INV-GAS {label}: owner leg differs"
+                );
+                if moved < 0 {
+                    inv!(now >= vb.v.locked_until, "INV-LOCK gas withdrawn while locked");
+                }
             }
             Op::Reserve(p) => {
                 inv!(self.w.skr, "INV-SKR {label} succeeded without an SKR mint");
@@ -761,6 +813,8 @@ impl FuzzTest {
         let ben = rb.beneficiary;
         let vault_key = self.w.vaults[p];
         let treasury = self.w.treasury;
+        // INV-GAS: what the payout paid its executor from the gas reserve.
+        let tip = (vb.v.gas_reserve - va.v.gas_reserve) as i128;
 
         // gross / net / fee in the paid asset
         let burned = (b.supply - a.supply) as i128;
@@ -776,11 +830,26 @@ impl FuzzTest {
             )
         } else {
             (
-                -self.ldelta(b, a, &vault_key),
+                -self.ldelta(b, a, &vault_key) - tip,
                 self.ldelta(b, a, &ben),
                 self.ldelta(b, a, &treasury),
             )
         };
+        let max_tip = EXEC_TIP
+            + if token {
+                self.rent_min(TOKEN_ACCOUNT_LEN)
+            } else {
+                0
+            };
+        inv!(tip as u64 <= max_tip, "INV-GAS {label} tipped {tip} > {max_tip}");
+        if vesting && tip > 0 && ra.executed_at == 0 {
+            let cap = model_cap(&vb.v, i) as u128;
+            let released = (ra.released - rb.released) as u128;
+            inv!(
+                released * MAX_VEST_TIPS >= cap,
+                "INV-GAS {label} tipped a release under 1% of the schedule"
+            );
+        }
         inv!(gross > 0, "{label} succeeded with nothing paid");
         inv!(
             net >= 0 && fee >= 0,
@@ -897,7 +966,7 @@ impl FuzzTest {
 
         // INV-STIPEND
         if token {
-            let stip = -self.ldelta(b, a, &vault_key);
+            let stip = -self.ldelta(b, a, &vault_key) - tip;
             let ben_gain = self.ldelta(b, a, &ben);
             inv_eq!(stip, ben_gain, "stipend leg not conserved");
             let expected = stipend_of(&rb.rail) as i128;
@@ -916,7 +985,7 @@ impl FuzzTest {
                     "INV-STIPEND rule {i} of plan {p} got two stipends"
                 );
                 let reserve = self.rent_min(va.len).max(va.v.rent_paid);
-                let free_b = vb.lamports.saturating_sub(reserve);
+                let free_b = vb.lamports.saturating_sub(reserve + vb.v.gas_reserve);
                 let owed = model_committed_sol(&vb.v) + model_reserved_sol(&vb.v);
                 inv!(
                     free_b >= owed + stip as u64,
@@ -928,7 +997,7 @@ impl FuzzTest {
             {
                 let ben_before = b.lamports[self.lamp_idx(&ben)];
                 let reserve = self.rent_min(vb.len).max(vb.v.rent_paid);
-                let free_b = vb.lamports.saturating_sub(reserve);
+                let free_b = vb.lamports.saturating_sub(reserve + vb.v.gas_reserve);
                 let owed = model_committed_sol(&vb.v) + model_reserved_sol(&vb.v);
                 inv!(
                     ben_before >= stipend_of(&rb.rail)
@@ -1087,7 +1156,7 @@ impl FuzzTest {
     // flows
     // ------------------------------------------------------------------
 
-    #[flow(weight = 8)]
+    #[flow(weight = 7)]
     fn create_plan(&mut self) {
         let p = self.pick_plan();
         let rules = self.random_rules();
@@ -1211,7 +1280,7 @@ impl FuzzTest {
         self.fund(p);
     }
 
-    #[flow(weight = 14)]
+    #[flow(weight = 10)]
     fn warp(&mut self) {
         let secs = match self.trident.random_from_range(0..5u8) {
             0 => self.trident.random_from_range(1..120i64),
@@ -1388,7 +1457,7 @@ impl FuzzTest {
         self.exec(&[ix], "skip_rule", Op::Skip(p, i));
     }
 
-    #[flow(weight = 6)]
+    #[flow(weight = 5)]
     fn withdraw(&mut self) {
         let p = self.pick_plan();
         let amount = match self.trident.random_from_range(0..3u8) {
@@ -1516,6 +1585,32 @@ impl FuzzTest {
             ))
             .instruction();
         self.exec(&[ix], "fund_skr_reserve", Op::Reserve(p));
+    }
+
+    #[flow(weight = 4)]
+    fn fund_gas_reserve(&mut self) {
+        let p = self.pick_plan();
+        let amount = self.trident.random_from_range(0..30_000_000u64);
+        let ix = FundGasReserveInstruction::data(FundGasReserveInstructionData::new(amount))
+            .accounts(FundGasReserveInstructionAccounts::new(
+                self.w.owner,
+                self.w.vaults[p],
+            ))
+            .instruction();
+        self.exec(&[ix], "fund_gas_reserve", Op::Gas(p));
+    }
+
+    #[flow(weight = 2)]
+    fn withdraw_gas_reserve(&mut self) {
+        let p = self.pick_plan();
+        let amount = self.trident.random_from_range(0..30_000_000u64);
+        let ix = WithdrawGasReserveInstruction::data(WithdrawGasReserveInstructionData::new(amount))
+            .accounts(WithdrawGasReserveInstructionAccounts::new(
+                self.w.owner,
+                self.w.vaults[p],
+            ))
+            .instruction();
+        self.exec(&[ix], "withdraw_gas_reserve", Op::Gas(p));
     }
 
     #[flow(weight = 3)]

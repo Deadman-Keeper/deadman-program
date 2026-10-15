@@ -1201,7 +1201,9 @@ fn blank_vault(kind: PlanKind) -> Vault {
         vest_period_secs: 0,
         skr_fee_reserve: 0,
         skr_reserve_mint: Pubkey::default(),
-        _reserved: [0; 15],
+        gas_reserve: 0,
+        gas_ata_paid: 0,
+        _reserved: [0; 6],
     }
 }
 

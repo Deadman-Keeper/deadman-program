@@ -1,4 +1,4 @@
-use anchor_lang::{prelude::*, solana_program::program::invoke_signed};
+use anchor_lang::{prelude::*, solana_program::program::invoke_signed, system_program};
 use anchor_spl::{
     associated_token::get_associated_token_address_with_program_id,
     token::{self, Token},
@@ -15,12 +15,54 @@ use crate::{
     },
 };
 
-/// Lamports above the rent reserve (see [`Vault::rent_reserve`]).
+/// Lamports above the rent reserve (see [`Vault::rent_reserve`]) and the
+/// gas reserve: what tiers, stipends and owner withdrawals can use.
 fn withdrawable_lamports(vault: &Account<Vault>) -> Result<u64> {
     let info = vault.to_account_info();
     Ok(info
         .lamports()
-        .saturating_sub(vault.rent_reserve(info.data_len())?))
+        .saturating_sub(vault.rent_reserve(info.data_len())?)
+        .saturating_sub(vault.gas_reserve))
+}
+
+/// Pays whoever ran rule `index`'s payout or skip from the plan's gas
+/// reserve: [`EXEC_TIP_LAMPORTS`], plus the rent of the beneficiary's token
+/// account on a token rule's first payout ([`Vault::gas_ata_paid`]). Pays
+/// what the reserve still holds, up to that.
+fn pay_gas_tip<'info>(
+    vault: &mut Account<'info, Vault>,
+    executor: &AccountInfo<'info>,
+    index: u8,
+    token_payout: bool,
+) -> Result<()> {
+    if vault.gas_reserve == 0 {
+        return Ok(());
+    }
+    let bit = stipend_bit(usize::from(index))?;
+    let refund_ata = token_payout && vault.gas_ata_paid & bit == 0;
+    let mut tip = EXEC_TIP_LAMPORTS;
+    if refund_ata {
+        tip = tip
+            .checked_add(Rent::get()?.minimum_balance(TOKEN_ACCOUNT_LEN))
+            .ok_or(DeadmanError::MathOverflow)?;
+    }
+    let tip = tip.min(vault.gas_reserve);
+    vault.sub_lamports(tip)?;
+    executor.add_lamports(tip)?;
+    vault.gas_reserve = vault
+        .gas_reserve
+        .checked_sub(tip)
+        .ok_or(DeadmanError::MathOverflow)?;
+    if refund_ata {
+        vault.gas_ata_paid |= bit;
+    }
+    emit!(GasTipPaid {
+        vault: vault.key(),
+        index,
+        executor: executor.key(),
+        amount: tip,
+    });
+    Ok(())
 }
 
 /// Private-rail token payouts also send the rail's SOL stipend so a fresh
@@ -334,6 +376,8 @@ pub fn handle_withdraw_token<'info>(
 #[derive(Accounts)]
 pub struct ExecuteSolRule<'info> {
     /// Anyone: the beneficiary, a keeper, or the protocol's own bot.
+    /// Writable: it is paid from the plan's gas reserve.
+    #[account(mut)]
     pub executor: Signer<'info>,
     #[account(
         mut,
@@ -426,11 +470,18 @@ pub fn handle_execute_sol_rule<'info>(
         fee,
         by: ctx.accounts.executor.key(),
     });
-    Ok(())
+    pay_gas_tip(
+        &mut ctx.accounts.vault,
+        &ctx.accounts.executor.to_account_info(),
+        index,
+        false,
+    )
 }
 
 #[derive(Accounts)]
 pub struct ExecuteTokenRule<'info> {
+    /// Writable: it is paid from the plan's gas reserve.
+    #[account(mut)]
     pub executor: Signer<'info>,
     #[account(
         mut,
@@ -633,12 +684,19 @@ pub fn handle_execute_token_rule<'info>(
         fee,
         by: ctx.accounts.executor.key(),
     });
-    Ok(())
+    pay_gas_tip(
+        &mut ctx.accounts.vault,
+        &ctx.accounts.executor.to_account_info(),
+        index,
+        true,
+    )
 }
 
 #[derive(Accounts)]
 pub struct SkipRule<'info> {
-    /// Anyone: usually a later beneficiary or the keeper.
+    /// Anyone: usually a later beneficiary or the keeper. Writable: it is
+    /// paid from the plan's gas reserve.
+    #[account(mut)]
     pub caller: Signer<'info>,
     #[account(
         mut,
@@ -691,7 +749,12 @@ pub fn handle_skip_rule(ctx: Context<SkipRule>, index: u8) -> Result<()> {
         reserved,
         by: ctx.accounts.caller.key(),
     });
-    Ok(())
+    pay_gas_tip(
+        &mut ctx.accounts.vault,
+        &ctx.accounts.caller.to_account_info(),
+        index,
+        false,
+    )
 }
 
 /// Releases what has vested so far on a SOL vesting schedule. Anyone may
@@ -762,7 +825,15 @@ pub fn handle_release_vested_sol<'info>(
         fee,
         by: ctx.accounts.executor.key(),
     });
-    Ok(())
+    if !release_tips(&ctx.accounts.vault, i, gross)? {
+        return Ok(());
+    }
+    pay_gas_tip(
+        &mut ctx.accounts.vault,
+        &ctx.accounts.executor.to_account_info(),
+        index,
+        false,
+    )
 }
 
 /// Token version of [`handle_release_vested_sol`].
@@ -819,7 +890,28 @@ pub fn handle_release_vested_token<'info>(
         fee,
         by: ctx.accounts.executor.key(),
     });
-    Ok(())
+    if !release_tips(&ctx.accounts.vault, i, gross)? {
+        return Ok(());
+    }
+    pay_gas_tip(
+        &mut ctx.accounts.vault,
+        &ctx.accounts.executor.to_account_info(),
+        index,
+        true,
+    )
+}
+
+/// Whether the release of `gross` just recorded on vesting schedule `i`
+/// earns its executor a gas tip: it completed the schedule or released at
+/// least 1 / [`MAX_VEST_TIPS`] of it.
+fn release_tips(vault: &Vault, i: usize, gross: u64) -> Result<bool> {
+    if vault.rules[i].executed_at != 0 {
+        return Ok(true);
+    }
+    let share = u128::from(gross)
+        .checked_mul(u128::from(MAX_VEST_TIPS))
+        .ok_or(DeadmanError::MathOverflow)?;
+    Ok(share >= u128::from(vault.vesting_cap(i)?))
 }
 
 fn record_release(
@@ -942,5 +1034,65 @@ pub fn handle_withdraw_skr_reserve<'info>(
         .skr_fee_reserve
         .checked_sub(amount)
         .ok_or(DeadmanError::MathOverflow)?;
+    vault.record_owner_pulse(now)
+}
+
+#[derive(Accounts)]
+pub struct GasReserve<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [VAULT_SEED, owner.key().as_ref(), &vault.plan_id.to_le_bytes()],
+        bump = vault.bump,
+        has_one = owner @ DeadmanError::Unauthorized
+    )]
+    pub vault: Box<Account<'info, Vault>>,
+    pub system_program: Program<'info, System>,
+}
+
+/// Moves `amount` lamports from the owner into the plan's gas reserve,
+/// which pays whoever runs each payout so beneficiaries never have to.
+/// Allowed at any time, like any deposit.
+pub fn handle_fund_gas_reserve(ctx: Context<GasReserve>, amount: u64) -> Result<()> {
+    system_program::transfer(
+        CpiContext::new(
+            ctx.accounts.system_program.key(),
+            system_program::Transfer {
+                from: ctx.accounts.owner.to_account_info(),
+                to: ctx.accounts.vault.to_account_info(),
+            },
+        ),
+        amount,
+    )?;
+    let vault = &mut ctx.accounts.vault;
+    vault.gas_reserve = vault
+        .gas_reserve
+        .checked_add(amount)
+        .ok_or(DeadmanError::MathOverflow)?;
+    emit!(GasReserveChanged {
+        vault: vault.key(),
+        gas_reserve: vault.gas_reserve,
+    });
+    Ok(())
+}
+
+/// Returns up to the whole gas reserve to the owner. Like every
+/// withdrawal, blocked during lockdown; closing the plan returns it too.
+pub fn handle_withdraw_gas_reserve(ctx: Context<GasReserve>, amount: u64) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
+    let vault = &mut ctx.accounts.vault;
+    vault.require_unlocked(now)?;
+    require!(amount <= vault.gas_reserve, DeadmanError::InsufficientFunds);
+    vault.sub_lamports(amount)?;
+    ctx.accounts.owner.add_lamports(amount)?;
+    vault.gas_reserve = vault
+        .gas_reserve
+        .checked_sub(amount)
+        .ok_or(DeadmanError::MathOverflow)?;
+    emit!(GasReserveChanged {
+        vault: vault.key(),
+        gas_reserve: vault.gas_reserve,
+    });
     vault.record_owner_pulse(now)
 }
